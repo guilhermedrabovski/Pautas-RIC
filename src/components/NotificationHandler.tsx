@@ -4,7 +4,7 @@ import { doc, updateDoc, arrayUnion, collection, query, onSnapshot } from 'fireb
 import { messaging, db } from '../lib/firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { toast } from 'react-hot-toast';
-import { playSuccessChime, speakEditorAssignment } from '../lib/soundChime';
+import { playSuccessChime, speakEditorAssignment, speakUnassignedUrgentAnnouncement } from '../lib/soundChime';
 
 export const requestNotificationPermission = async (userData: any) => {
   if (!userData || !messaging) {
@@ -107,16 +107,24 @@ export default function NotificationHandler() {
         const prev = prevRetrancasRef.current.get(d.id);
 
         if (!initialSyncRef.current) {
-          // 1. Voice Announcement when a retranca is assigned to the current user (Editor)
+          const isUrgent = !!data.isUrgent;
+          const isUnassigned = !data.editorId;
           const isNowAssignedToMe = isMatchMe(data.editorId);
           const wasAssignedToMe = prev && isMatchMe(prev.editorId);
 
-          if (isNowAssignedToMe && (!wasAssignedToMe || (prev && prev.editorId !== data.editorId))) {
-            // Trigger spoken voice announcement with editor name!
-            speakEditorAssignment(data.editorId || userData.name || 'Editor', data.title);
+          // 1. Voice Announcement: Brand NEW UNASSIGNED URGENT retranca -> announce to everyone!
+          if (!prev && isUnassigned && isUrgent) {
+            speakUnassignedUrgentAnnouncement(data.title);
+            toast.error(`🚨 RETRANCA URGENTE NA FILA ABERTA: ${data.title}!`, { duration: 9000 });
           }
 
-          // 2. Alert creator when VT is completed
+          // 2. Voice Announcement when a retranca is assigned to the current user (Editor)
+          else if (isNowAssignedToMe && (!wasAssignedToMe || (prev && prev.editorId !== data.editorId))) {
+            // Trigger spoken voice announcement with editor name (with urgency stress if urgent!)
+            speakEditorAssignment(data.editorId || userData.name || 'Editor', data.title, isUrgent);
+          }
+
+          // 3. Alert creator when VT is completed
           if (prev && prev.status !== 'concluido' && data.status === 'concluido') {
             const isCreator = data.createdBy === userData.uid || 
               (userData.name && data.createdByName?.toLowerCase() === userData.name.toLowerCase()) ||

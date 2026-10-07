@@ -10,7 +10,7 @@ import toast from 'react-hot-toast';
 import { confirmAction } from '../lib/confirmHelper';
 import EditorWorkloadWidget from '../components/EditorWorkloadWidget';
 import { IMAGE_EDITORS_LIST } from '../lib/constants';
-import { playSuccessChime, speakEditorAssignment } from '../lib/soundChime';
+import { playSuccessChime, speakEditorAssignment, speakUnassignedUrgentAnnouncement } from '../lib/soundChime';
 
 export default function Dashboard() {
   const { userData, users } = useAuth();
@@ -163,7 +163,9 @@ export default function Dashboard() {
 
       const editorObj = IMAGE_EDITORS_LIST.find(e => e.uid === assignEditorId);
       if (assignEditorId) {
-        speakEditorAssignment(editorObj?.name || assignEditorId, assignTitle.trim().toUpperCase());
+        speakEditorAssignment(editorObj?.name || assignEditorId, assignTitle.trim().toUpperCase(), assignIsUrgent);
+      } else if (assignIsUrgent) {
+        speakUnassignedUrgentAnnouncement(assignTitle.trim().toUpperCase());
       } else {
         playSuccessChime();
       }

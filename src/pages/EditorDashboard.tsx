@@ -30,7 +30,7 @@ import { confirmAction } from '../lib/confirmHelper';
 import { format } from 'date-fns';
 import { PREDEFINED_USERS, IMAGE_EDITORS_LIST } from '../lib/constants';
 import EditorWorkloadWidget from '../components/EditorWorkloadWidget';
-import { playSuccessChime, speakEditorAssignment } from '../lib/soundChime';
+import { playSuccessChime, speakEditorAssignment, speakUnassignedUrgentAnnouncement } from '../lib/soundChime';
 
 export interface User {
   uid: string;
@@ -193,25 +193,29 @@ export default function EditorDashboard() {
 
           // Condition 1: Brand new retranca assigned to me
           if (!prev && isAssignedToMe) {
-            speakEditorAssignment(r.editorId, r.title);
+            speakEditorAssignment(r.editorId, r.title, !!r.isUrgent);
             setRealtimeAlert({
               retranca: r,
-              message: `Nova retranca atribuída a você: "${r.title}"`,
+              message: r.isUrgent 
+                ? `🚨 RETRANCA URGENTE atribuída a você: "${r.title}"!`
+                : `Nova retranca atribuída a você: "${r.title}"`,
               isMine: true
             });
             toast.success(`🔔 Nova retranca para você: ${r.title}`, { duration: 6000 });
           }
-          // Condition 2: Brand new unassigned urgent retranca (alert all editors)
+          // Condition 2: Brand new unassigned urgent retranca (announce out loud to all editors)
           else if (!prev && isUnassigned && r.isUrgent) {
-            playNotificationSound();
-            toast(`🚨 Nova retranca URGENTE na fila: ${r.title}`, { icon: '🔥', duration: 7000 });
+            speakUnassignedUrgentAnnouncement(r.title);
+            toast(`🚨 RETRANCA URGENTE NA FILA ABERTA: ${r.title}`, { icon: '🔥', duration: 8000 });
           }
           // Condition 3: Existing retranca was assigned to me
           else if (prev && prev.editorId !== userData.uid && isAssignedToMe) {
-            speakEditorAssignment(r.editorId, r.title);
+            speakEditorAssignment(r.editorId, r.title, !!r.isUrgent);
             setRealtimeAlert({
               retranca: r,
-              message: `Você foi marcado na retranca: "${r.title}"`,
+              message: r.isUrgent 
+                ? `🚨 RETRANCA URGENTE transferida para você: "${r.title}"!`
+                : `Você foi marcado na retranca: "${r.title}"`,
               isMine: true
             });
             toast.success(`🔔 Retranca atribuída a você: ${r.title}`, { duration: 6000 });
@@ -267,7 +271,9 @@ export default function EditorDashboard() {
       });
 
       if (editorId) {
-        speakEditorAssignment(editorId, title.trim().toUpperCase());
+        speakEditorAssignment(editorId, title.trim().toUpperCase(), isUrgent);
+      } else if (isUrgent) {
+        speakUnassignedUrgentAnnouncement(title.trim().toUpperCase());
       }
       toast.success(editorId ? 'Retranca criada e editor notificado!' : 'Retranca enviada para a fila de edição!');
       resetForm();
@@ -506,14 +512,27 @@ export default function EditorDashboard() {
             type="button"
             onClick={() => {
               const testEditor = userData?.name || 'Zand';
-              speakEditorAssignment(testEditor, 'ACIDENTE NA BR');
-              toast.success(`🔊 Testando voz de anúncio: "${testEditor}"`, { icon: '🎙️' });
+              speakEditorAssignment(testEditor, 'BATIDA NA BR 277', false);
+              toast.success(`🔊 Testando anúncio normal: "${testEditor}"`, { icon: '🎙️' });
             }}
             className="py-2.5 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-black uppercase flex items-center gap-1.5 transition-all cursor-pointer active:scale-95"
-            title="Clique para testar o anúncio por voz com o nome do editor"
+            title="Testar voz normal com o nome do editor"
           >
             <Volume2 size={15} />
             Testar Voz
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              speakUnassignedUrgentAnnouncement('MEGA OPERAÇÃO POLICIAL');
+              toast.error('🚨 Testando alerta de Retranca Urgente aberta!', { icon: '🔥' });
+            }}
+            className="py-2.5 px-3 bg-red-100 hover:bg-red-200 text-red-800 border border-red-300 rounded-xl text-xs font-black uppercase flex items-center gap-1.5 transition-all cursor-pointer active:scale-95"
+            title="Testar anúncio sonoro de retranca URGENTE aberta a todos"
+          >
+            <Flame size={15} className="text-red-600" />
+            Testar Voz Urgente
           </button>
 
           {isPauteiro && (
