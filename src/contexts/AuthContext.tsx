@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { User, onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
 import { doc, getDoc, setDoc, getDocs, collection } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
+import { PREDEFINED_USERS } from '../lib/constants';
 
 export interface UserData {
   uid: string;
@@ -55,7 +56,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           if (docSnap.exists()) {
             setUserData({ ...docSnap.data(), uid: u.uid } as UserData);
           } else {
-            setUserData(null);
+            // Find in predefined users by email or username
+            const emailLower = (u.email || '').toLowerCase();
+            const usernameGuess = emailLower.includes('@') ? emailLower.split('@')[0] : emailLower;
+            const predefined = PREDEFINED_USERS.find(p => 
+              p.username.toLowerCase() === usernameGuess || 
+              emailLower.includes(p.username.toLowerCase()) ||
+              (u.displayName && p.name.toLowerCase() === u.displayName.toLowerCase())
+            );
+
+            const fallbackUser: UserData = {
+              uid: u.uid,
+              name: predefined?.name || u.displayName || usernameGuess.charAt(0).toUpperCase() + usernameGuess.slice(1),
+              email: u.email || `${usernameGuess}@ric.com.br`,
+              role: (predefined?.role as any) || (usernameGuess.includes('guilherme') ? 'admin' : 'reporter')
+            };
+
+            setDoc(docRef, fallbackUser, { merge: true }).catch(err => console.warn(err));
+            setUserData(fallbackUser);
           }
         } else {
           setUserData(null);

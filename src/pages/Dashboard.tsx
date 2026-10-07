@@ -96,7 +96,7 @@ export default function Dashboard() {
         return false;
       });
       setPendingTrades(relevantTrades);
-    });
+    }, err => console.warn('Dashboard trades error:', err));
 
     return () => { unsubR(); unsubH(); unsubTpl(); unsubRun(); unsubT(); unsubAllT(); unsubScale(); unsubTrades(); };
   }, [userData, today, isManager]);

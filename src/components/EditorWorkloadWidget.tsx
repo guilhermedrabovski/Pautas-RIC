@@ -158,7 +158,7 @@ export default function EditorWorkloadWidget({
           <div>
             <div className="flex items-center gap-2">
               <h2 className="text-base font-black text-slate-900 uppercase tracking-tight">
-                Ilha de Edição de Imagem
+                Ilhas de Edição
               </h2>
               <span className="bg-blue-100 text-ric-blue text-[10px] font-black uppercase px-2 py-0.5 rounded-full">
                 Ao Vivo

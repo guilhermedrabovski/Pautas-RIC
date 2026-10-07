@@ -36,7 +36,7 @@ export default function Layout() {
 
     const unsubReminders = onSnapshot(qReminders, snap => {
       setUnreadRemindersCount(snap.docs.length);
-    });
+    }, err => console.warn('Reminders snapshot error:', err));
 
     // Listen for trades needing attention
     const statuses = isManager() ? ['pending_target', 'pending_admin'] : ['pending_target'];
@@ -56,7 +56,7 @@ export default function Layout() {
         }
       });
       setPendingScalesCount(count);
-    });
+    }, err => console.warn('Trades snapshot error:', err));
 
     return () => { unsubReminders(); unsubTrades(); };
   }, [userData?.uid, userData?.role, userData?.name]);
@@ -64,13 +64,15 @@ export default function Layout() {
   // Menu items: Editores vão direto para Ilhas de Edição
   const menu = isEditor
     ? [
-        { name: 'Ilhas de Edição', icon: LayoutDashboard, path: '/editor-dashboard' }
+        { name: 'Ilhas de Edição', icon: LayoutDashboard, path: '/editor-dashboard' },
+        { name: 'WhatsApp Sugestões', icon: MessageSquare, path: '/whatsapp' },
+        { name: 'Lembretes', icon: Bell, path: '/reminders', badge: unreadRemindersCount }
       ]
     : [
         { name: 'Início', icon: LayoutDashboard, path: '/dashboard' },
+        { name: 'Ilhas de Edição', icon: LayoutDashboard, path: '/editor-dashboard' },
         { name: 'Pautas', icon: ClipboardList, path: '/agendas' },
         { name: 'WhatsApp Sugestões', icon: MessageSquare, path: '/whatsapp' },
-        { name: 'Ilhas de Edição', icon: LayoutDashboard, path: '/editor-dashboard' },
         { name: 'Meu Painel', icon: ClipboardList, path: '/my-dashboard', hide: !isReporter },
         { name: 'Lembretes', icon: Bell, path: '/reminders', badge: unreadRemindersCount },
         { name: 'Histórias (Repercussão)', icon: BookOpen, path: '/stories' },

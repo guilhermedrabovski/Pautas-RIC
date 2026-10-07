@@ -169,7 +169,8 @@ export default function EditorDashboard() {
         }
       });
       setEditors(merged);
-    }, () => {
+    }, (err) => {
+      console.warn("Error fetching users for editors in EditorDashboard:", err);
       setEditors(predefinedEditors);
     });
     return unsub;
@@ -433,15 +434,26 @@ export default function EditorDashboard() {
   };
 
   const isTargetOfRetranca = (r: Retranca) => {
+    if (!r.editorId || !userData) return false;
     const target = (r.editorId || '').toLowerCase().trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-    const myUid = (userData?.uid || '').toLowerCase().trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-    const myName = (userData?.name || '').toLowerCase().trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-    return Boolean(target && (
-      target === myUid || 
-      target === myName || 
-      (myName && myName.includes(target)) || 
-      (myUid && myUid.includes(target))
-    ));
+    const myUid = (userData.uid || '').toLowerCase().trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    const myName = (userData.name || '').toLowerCase().trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    const myEmail = (userData.email || '').toLowerCase().trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    const myUsername = myEmail.includes('@') ? myEmail.split('@')[0] : '';
+
+    if (target === myUid || target === myName || (myUsername && target === myUsername)) return true;
+    if (myName && (myName.includes(target) || target.includes(myName))) return true;
+    if (myUid && (myUid.includes(target) || target.includes(myUid))) return true;
+    if (myUsername && (myUsername.includes(target) || target.includes(myUsername))) return true;
+
+    // Check the 4 image editors explicitly (Zand, Jamir, Jean, Miúdo)
+    const imageEditors = ['zand', 'jamir', 'jean', 'miudo'];
+    for (const ed of imageEditors) {
+      if (target.includes(ed) && (myName.includes(ed) || myUid.includes(ed) || myEmail.includes(ed) || myUsername.includes(ed))) {
+        return true;
+      }
+    }
+    return false;
   };
 
   // Filtered Retrancas
@@ -607,10 +619,10 @@ export default function EditorDashboard() {
                 <div className="flex flex-wrap items-center gap-2 pt-3 border-t border-zinc-800 mt-2">
                   {retranca.status === 'pendente' ? (
                     <button
-                      onClick={() => updateStatus(retranca.id, 'editando')}
+                      onClick={() => handleClaimRetranca(retranca)}
                       className="flex-1 bg-blue-600 hover:bg-blue-500 text-white text-xs font-black uppercase py-2.5 px-3 rounded-xl shadow-md transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-95"
                     >
-                      <Play size={16} fill="white" /> Iniciar Edição
+                      <Play size={16} fill="white" /> Assumir & Iniciar Edição
                     </button>
                   ) : (
                     <button
@@ -757,7 +769,9 @@ export default function EditorDashboard() {
                   onOpenUpdateModal={openUpdateModal}
                   onDelete={handleDelete}
                   isPauteiro={isPauteiro}
-                  currentUserId={userData?.uid}
+                  isImageEditorUser={isImageEditorUser}
+                  currentUser={userData}
+                  isTarget={isTargetOfRetranca(r)}
                 />
               ))
             )}
@@ -793,7 +807,9 @@ export default function EditorDashboard() {
                   onOpenUpdateModal={openUpdateModal}
                   onDelete={handleDelete}
                   isPauteiro={isPauteiro}
-                  currentUserId={userData?.uid}
+                  isImageEditorUser={isImageEditorUser}
+                  currentUser={userData}
+                  isTarget={isTargetOfRetranca(r)}
                 />
               ))
             )}
@@ -1142,7 +1158,9 @@ function RetrancaCard({
   onOpenUpdateModal,
   onDelete,
   isPauteiro,
-  currentUserId
+  isImageEditorUser,
+  currentUser,
+  isTarget
 }: {
   key?: React.Key;
   retranca: Retranca;
@@ -1153,12 +1171,13 @@ function RetrancaCard({
   onOpenUpdateModal: (retranca: Retranca) => void;
   onDelete: (id: string) => void;
   isPauteiro: boolean;
-  currentUserId?: string;
+  isImageEditorUser: boolean;
+  currentUser?: any;
+  isTarget: boolean;
 }) {
   const [showUpdates, setShowUpdates] = useState(false);
-  const isMine = retranca.editorId === currentUserId;
-  const isUnassigned = !retranca.editorId;
-  const canInteract = isPauteiro || isMine || isUnassigned;
+  const isMine = isTarget || (currentUser?.uid && retranca.editorId === currentUser.uid);
+  const isUnassigned = !retranca.editorId || retranca.editorId.trim() === '';
   const hasUpdates = retranca.updates && retranca.updates.length > 0;
 
   return (
@@ -1223,6 +1242,19 @@ function RetrancaCard({
         <p className="text-xs text-slate-600 leading-relaxed mb-3 line-clamp-3 bg-slate-50/80 p-2 rounded-lg">
           {retranca.description}
         </p>
+      )}
+
+      {/* Target Notification Banner: If assigned to current user and pending */}
+      {isMine && retranca.status === 'pendente' && (
+        <div className="mb-3 px-3 py-2 bg-blue-50 border-2 border-blue-400 rounded-xl flex items-center justify-between text-xs font-black uppercase text-blue-900 animate-pulse">
+          <div className="flex items-center gap-1.5">
+            <Sparkles size={14} className="text-blue-600" />
+            <span>Atribuída a você!</span>
+          </div>
+          <span className="text-[10px] bg-blue-600 text-white px-2 py-0.5 rounded-md font-bold">
+            Assumir Abaixo
+          </span>
+        </div>
       )}
 
       {/* New Media Alert Badge */}
@@ -1304,71 +1336,90 @@ function RetrancaCard({
       </div>
 
       {/* Action Buttons Row */}
-      {canInteract && (
-        <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100">
-          {/* Claim Button if not assigned yet */}
-          {isUnassigned && retranca.status === 'pendente' && (
-            <button
-              onClick={() => onClaim(retranca)}
-              className="flex-1 bg-amber-500 hover:bg-amber-600 text-white text-xs font-black uppercase py-2 px-3 rounded-xl transition-all shadow-xs flex items-center justify-center gap-1.5 cursor-pointer active:scale-95"
-            >
-              <UserCheck size={14} /> Assumir Edição
-            </button>
-          )}
+      <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100">
+        {/* If retranca is pending */}
+        {retranca.status === 'pendente' && (
+          <>
+            {/* Case 1: Assigned to current user -> Assumir & Iniciar Edição */}
+            {isMine && (
+              <button
+                type="button"
+                onClick={() => onClaim(retranca)}
+                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-xs font-black uppercase py-2.5 px-3 rounded-xl transition-all shadow-md flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 ring-2 ring-blue-400"
+              >
+                <Play size={14} fill="white" /> Assumir & Iniciar Edição
+              </button>
+            )}
 
-          {/* Start Editing Button if assigned */}
-          {!isUnassigned && retranca.status === 'pendente' && (
-            <button
-              onClick={() => onStatusChange(retranca.id, 'editando')}
-              className="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-xs font-black uppercase py-2 px-3 rounded-xl transition-all shadow-xs flex items-center justify-center gap-1.5 cursor-pointer active:scale-95"
-            >
-              <Play size={13} /> Iniciar Edição
-            </button>
-          )}
+            {/* Case 2: Open in queue without editor -> Assumir Edição */}
+            {isUnassigned && (
+              <button
+                type="button"
+                onClick={() => onClaim(retranca)}
+                className="flex-1 bg-amber-500 hover:bg-amber-600 text-white text-xs font-black uppercase py-2.5 px-3 rounded-xl transition-all shadow-xs flex items-center justify-center gap-1.5 cursor-pointer active:scale-95"
+              >
+                <UserCheck size={14} /> Assumir Edição
+              </button>
+            )}
 
-          {/* Finish Button if editing */}
-          {retranca.status === 'editando' && (
-            <button
-              onClick={() => onStatusChange(retranca.id, 'concluido')}
-              className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black uppercase py-2 px-3 rounded-xl transition-all shadow-xs flex items-center justify-center gap-1.5 cursor-pointer active:scale-95"
-            >
-              <Check size={14} /> Concluir VT
-            </button>
-          )}
+            {/* Case 3: Assigned to someone else, but still pending -> other image editors or pauteiro can assume */}
+            {!isMine && !isUnassigned && (
+              <button
+                type="button"
+                onClick={() => onClaim(retranca)}
+                className="flex-1 bg-slate-800 hover:bg-slate-900 text-white text-xs font-black uppercase py-2.5 px-3 rounded-xl transition-all shadow-xs flex items-center justify-center gap-1.5 cursor-pointer active:scale-95"
+                title={`Atribuída a ${editorName}. Clique para assumir.`}
+              >
+                <UserCheck size={14} /> Assumir Retranca
+              </button>
+            )}
+          </>
+        )}
 
-          {/* Unclaim / Desassumir button */}
-          {isMine && retranca.status === 'editando' && onUnclaim && (
-            <button
-              type="button"
-              onClick={() => onUnclaim(retranca)}
-              className="bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 text-xs font-black uppercase py-2 px-3 rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 shadow-xs"
-              title="Desassumir e liberar retranca de volta para a fila aberta"
-            >
-              <UserX size={14} /> Desassumir
-            </button>
-          )}
-
-          {/* Reopen Button if completed */}
-          {retranca.status === 'concluido' && (
-            <button
-              onClick={() => onStatusChange(retranca.id, 'editando')}
-              className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-black uppercase py-2 px-3 rounded-xl transition-all cursor-pointer"
-            >
-              Reabrir Edição
-            </button>
-          )}
-
-          {/* Add More Media / Info Button (Always visible on all stages) */}
+        {/* Finish Button if editing */}
+        {retranca.status === 'editando' && (
           <button
             type="button"
-            onClick={() => onOpenUpdateModal(retranca)}
-            className="text-xs font-black uppercase py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 transition-all cursor-pointer bg-slate-900 hover:bg-black text-white active:scale-95 shadow-xs"
-            title="Adicionar novas imagens, sonoras ou informações que chegaram"
+            onClick={() => onStatusChange(retranca.id, 'concluido')}
+            className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black uppercase py-2.5 px-3 rounded-xl transition-all shadow-xs flex items-center justify-center gap-1.5 cursor-pointer active:scale-95"
           >
-            <Plus size={14} /> Nova Mídia / Info
+            <Check size={14} strokeWidth={3} /> Concluir VT
           </button>
-        </div>
-      )}
+        )}
+
+        {/* Unclaim / Desassumir button */}
+        {retranca.status === 'editando' && onUnclaim && (isMine || isPauteiro) && (
+          <button
+            type="button"
+            onClick={() => onUnclaim(retranca)}
+            className="bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 text-xs font-black uppercase py-2 px-3 rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 shadow-xs"
+            title="Desassumir e liberar retranca de volta para a fila aberta"
+          >
+            <UserX size={14} /> Desassumir
+          </button>
+        )}
+
+        {/* Reopen Button if completed */}
+        {retranca.status === 'concluido' && (
+          <button
+            type="button"
+            onClick={() => onStatusChange(retranca.id, 'editando')}
+            className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-black uppercase py-2 px-3 rounded-xl transition-all cursor-pointer"
+          >
+            Reabrir Edição
+          </button>
+        )}
+
+        {/* Add More Media / Info Button (Always visible on all stages) */}
+        <button
+          type="button"
+          onClick={() => onOpenUpdateModal(retranca)}
+          className="text-xs font-black uppercase py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 transition-all cursor-pointer bg-slate-900 hover:bg-black text-white active:scale-95 shadow-xs"
+          title="Adicionar novas imagens, sonoras ou informações que chegaram"
+        >
+          <Plus size={14} /> Nova Mídia / Info
+        </button>
+      </div>
     </div>
   );
 }

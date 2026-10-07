@@ -75,7 +75,7 @@ export default function WhatsAppMessages() {
     const q = query(collection(db, 'whatsapp_messages'), orderBy('createdAt', 'desc'), limit(100));
     const unsub = onSnapshot(q, snap => {
       setMessages(snap.docs.map(d => ({ id: d.id, ...d.data() } as WhatsAppMessage)));
-    });
+    }, err => console.warn('WhatsApp messages snapshot error:', err));
     return () => unsub();
   }, []);
 
@@ -294,9 +294,9 @@ export default function WhatsAppMessages() {
       <div className="bg-white p-6 rounded-2xl border border-ric-border shadow-sm flex flex-col md:flex-row justify-between items-center gap-4">
         <div>
           <h2 className="text-xl font-black text-ric-text uppercase flex items-center gap-2">
-            <MessageSquare className="text-ric-red" /> Filtro WhatsApp
+            <MessageSquare className="text-ric-red" /> WhatsApp Sugestões
           </h2>
-          <p className="text-xs text-ric-muted font-medium uppercase tracking-widest mt-1">Triagem de mensagens recebidas para BG e Cidade Alerta</p>
+          <p className="text-xs text-ric-muted font-medium uppercase tracking-widest mt-1">Triagem de sugestões e mensagens recebidas para BG e Cidade Alerta</p>
         </div>
         
         <div className="flex gap-2">
