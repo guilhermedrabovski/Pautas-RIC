@@ -5,6 +5,7 @@ import { useAuth, UserData } from '../contexts/AuthContext';
 import toast from 'react-hot-toast';
 import { format } from 'date-fns';
 import { getDisplayNames } from '../lib/userUtils';
+import { notifyUrgentPautaPush } from '../lib/notifications';
 
 export default function AgendaForm({ users, onClose, editData = null }: { users: UserData[], onClose: () => void, editData?: any }) {
   const { userData, user } = useAuth();
@@ -44,6 +45,15 @@ export default function AgendaForm({ users, onClose, editData = null }: { users:
           createdAt: Date.now(),
           updatedAt: Date.now()
         });
+
+        if (formData.priority === 'alta') {
+          notifyUrgentPautaPush({
+            title: formData.title || formData.slug,
+            isUrgent: true,
+            url: '/pautas',
+          }).catch(err => console.warn('Push error on agenda:', err));
+        }
+
         toast.success('Pauta enviada!');
       }
       onClose();

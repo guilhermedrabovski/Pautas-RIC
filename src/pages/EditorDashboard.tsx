@@ -23,7 +23,8 @@ import {
   Film, 
   ChevronDown, 
   ChevronUp,
-  Volume2
+  Volume2,
+  BellRing
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { confirmAction } from '../lib/confirmHelper';
@@ -31,6 +32,8 @@ import { format } from 'date-fns';
 import { PREDEFINED_USERS, IMAGE_EDITORS_LIST } from '../lib/constants';
 import EditorWorkloadWidget from '../components/EditorWorkloadWidget';
 import { playSuccessChime, speakEditorAssignment, speakUnassignedUrgentAnnouncement } from '../lib/soundChime';
+import { requestNotificationPermission } from '../components/NotificationHandler';
+import { notifyUrgentPautaPush } from '../lib/notifications';
 
 export interface User {
   uid: string;
@@ -130,6 +133,40 @@ export default function EditorDashboard() {
   const [deadline, setDeadline] = useState('');
   const [journal, setJournal] = useState<'BG' | 'Cidade Alerta' | 'Geral'>('BG');
   const [formatType, setFormatType] = useState<'VT' | 'Sonora' | 'Compacto' | 'Ao Vivo' | 'Bruto'>('VT');
+  const [notificationPerm, setNotificationPerm] = useState<string>(
+    typeof window !== 'undefined' && 'Notification' in window ? Notification.permission : 'default'
+  );
+
+  const handleTestBackgroundPush = async () => {
+    if (!userData) return;
+    toast.loading('Enviando alerta de teste via Web Push (chave VAPID)...', { id: 'test-push' });
+    try {
+      const res = await fetch('/api/send-notification', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tokens: userData.fcmTokens || [localStorage.getItem('ric_fcm_token')].filter(Boolean),
+          title: '🚨 TESTE: Retranca Urgente em Segundo Plano',
+          body: 'O Web Push com a chave VAPID está ativo! Você receberá avisos mesmo minimizado.',
+          isUrgent: true,
+          url: '/ilhas-de-edicao',
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        toast.success('Notificação disparada! Minimize ou troque de aba para ver o alerta no seu sistema.', {
+          id: 'test-push',
+          duration: 7000,
+        });
+      } else {
+        toast.error(`Falha ao disparar push: ${data.error || 'Nenhum dispositivo registrado ainda.'}`, {
+          id: 'test-push',
+        });
+      }
+    } catch (err: any) {
+      toast.error('Erro de conexão ao enviar push: ' + err.message, { id: 'test-push' });
+    }
+  };
 
   const initialLoadRef = useRef(true);
   const prevRetrancasRef = useRef<Map<string, Retranca>>(new Map());
@@ -275,6 +312,19 @@ export default function EditorDashboard() {
       } else if (isUrgent) {
         speakUnassignedUrgentAnnouncement(title.trim().toUpperCase());
       }
+
+      // Dispatch Web Push Notification (FCM / VAPID) for background alerts
+      if (isUrgent) {
+        const assignedEditorObj = IMAGE_EDITORS_LIST.find(e => e.uid === editorId);
+        notifyUrgentPautaPush({
+          title: title.trim().toUpperCase(),
+          editorId: editorId || '',
+          editorName: assignedEditorObj?.name,
+          isUrgent: true,
+          url: '/ilhas-de-edicao',
+        }).catch(pushErr => console.warn('Erro ao disparar Web Push:', pushErr));
+      }
+
       toast.success(editorId ? 'Retranca criada e editor notificado!' : 'Retranca enviada para a fila de edição!');
       resetForm();
     } catch (error: any) {
@@ -508,6 +558,33 @@ export default function EditorDashboard() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
+          {/* Web Push Status / Activation */}
+          {notificationPerm === 'granted' ? (
+            <button
+              type="button"
+              onClick={handleTestBackgroundPush}
+              className="py-2.5 px-3 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-xl text-xs font-black uppercase flex items-center gap-1.5 transition-all cursor-pointer active:scale-95 shadow-xs"
+              title="Notificações Push ativas! Clique para testar recebimento em segundo plano."
+            >
+              <BellRing size={15} className="text-emerald-600 animate-bounce" />
+              <span>Push Ativo</span>
+              <span className="text-[10px] bg-emerald-200 px-1 py-0.2 rounded font-bold">Testar</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={async () => {
+                await requestNotificationPermission(userData);
+                setNotificationPerm(typeof window !== 'undefined' && 'Notification' in window ? Notification.permission : 'default');
+              }}
+              className="py-2.5 px-3.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-black uppercase flex items-center gap-1.5 transition-all cursor-pointer active:scale-95 shadow-md shadow-amber-500/20 animate-pulse"
+              title="Ativar Web Push Notifications para pautas urgentes em segundo plano"
+            >
+              <Bell size={15} />
+              Ativar Web Push
+            </button>
+          )}
+
           <button
             type="button"
             onClick={() => {
@@ -545,6 +622,35 @@ export default function EditorDashboard() {
           )}
         </div>
       </div>
+
+      {/* Web Push Prompt Banner for Editors if permission not granted yet */}
+      {notificationPerm !== 'granted' && (
+        <div className="bg-gradient-to-r from-blue-900 to-slate-900 text-white p-4 rounded-2xl border border-blue-700 shadow-md flex flex-col md:flex-row items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-400/40 text-amber-400 flex items-center justify-center shrink-0">
+              <BellRing size={20} className="animate-pulse" />
+            </div>
+            <div>
+              <h4 className="text-sm font-black uppercase tracking-wide text-amber-300">
+                Ative as Notificações Web Push da Ilha de Edição
+              </h4>
+              <p className="text-xs text-slate-300 mt-0.5">
+                Receba alertas instantâneos de <strong>Pautas Urgentes</strong> mesmo quando estiver trabalhando no Premiere, Avid ou com o navegador minimizado.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={async () => {
+              await requestNotificationPermission(userData);
+              setNotificationPerm(typeof window !== 'undefined' && 'Notification' in window ? Notification.permission : 'default');
+            }}
+            className="w-full md:w-auto px-5 py-2.5 bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs uppercase rounded-xl transition-all shadow-lg shadow-amber-500/30 cursor-pointer active:scale-95 shrink-0"
+          >
+            Ativar Notificações no Navegador
+          </button>
+        </div>
+      )}
 
       {/* STATUS DA ILHA DE EDIÇÃO (OCUPAÇÃO, PORCENTAGEM & ALERTA LIVRE) */}
       <EditorWorkloadWidget 
@@ -609,8 +715,15 @@ export default function EditorDashboard() {
             {myAssumedRetrancas.map(retranca => (
               <div 
                 key={retranca.id}
-                className="bg-zinc-900 border-2 border-zinc-700 hover:border-red-500 rounded-xl p-4 shadow-lg flex flex-col justify-between transition-all relative overflow-hidden"
+                className={`bg-zinc-900 rounded-xl p-4 shadow-xl flex flex-col justify-between transition-all relative overflow-hidden ${
+                  retranca.isUrgent 
+                    ? 'border-2 border-red-500 ring-4 ring-red-600/30 shadow-red-950/50' 
+                    : 'border-2 border-zinc-700 hover:border-zinc-500'
+                }`}
               >
+                {retranca.isUrgent && (
+                  <div className="absolute top-0 right-0 left-0 h-1 bg-gradient-to-r from-red-600 via-amber-500 to-red-600 animate-pulse" />
+                )}
                 <div>
                   <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
                     <div className="flex items-center gap-1.5">
@@ -623,8 +736,8 @@ export default function EditorDashboard() {
                         {retranca.format || 'VT'}
                       </span>
                       {retranca.isUrgent && (
-                        <span className="text-[10px] font-black uppercase bg-red-600 text-white px-2 py-0.5 rounded-md flex items-center gap-1 animate-pulse">
-                          <Flame size={11} /> URGENTE
+                        <span className="text-[10px] font-black uppercase bg-red-600 text-white px-2.5 py-0.5 rounded-md flex items-center gap-1 shadow-md shadow-red-600/40 animate-pulse ring-2 ring-red-400">
+                          <Flame size={12} fill="white" /> URGENTE • PRIORIDADE
                         </span>
                       )}
                     </div>
@@ -1221,10 +1334,15 @@ function RetrancaCard({
 
   return (
     <div 
-      className={`bg-white rounded-2xl border p-4 shadow-xs hover:shadow-md transition-all flex flex-col relative overflow-hidden ${
-        retranca.isUrgent ? 'border-red-400 ring-2 ring-red-400/30' : 'border-slate-200'
+      className={`rounded-2xl border p-4 shadow-xs hover:shadow-md transition-all flex flex-col relative overflow-hidden ${
+        retranca.isUrgent 
+          ? 'bg-red-50/40 border-2 border-red-500 ring-2 ring-red-500/30 shadow-red-100' 
+          : 'bg-white border-slate-200'
       } ${retranca.hasNewMedia && isMine ? 'ring-2 ring-amber-500 animate-pulse' : ''}`}
     >
+      {retranca.isUrgent && (
+        <div className="absolute top-0 right-0 left-0 h-1 bg-gradient-to-r from-red-600 via-amber-500 to-red-600 animate-pulse" />
+      )}
       {/* Top Badges Row */}
       <div className="flex flex-wrap items-center justify-between gap-1.5 mb-2">
         <div className="flex items-center gap-1.5">
@@ -1243,8 +1361,8 @@ function RetrancaCard({
           )}
 
           {retranca.isUrgent && (
-            <span className="text-[9px] font-black uppercase bg-red-100 text-red-700 px-2 py-0.5 rounded-md flex items-center gap-0.5 animate-pulse">
-              <Flame size={10} /> URGENTE
+            <span className="text-[10px] font-black uppercase bg-red-600 text-white px-2 py-0.5 rounded-md flex items-center gap-1 shadow-xs animate-pulse ring-2 ring-red-400">
+              <Flame size={11} fill="white" /> URGENTE
             </span>
           )}
         </div>

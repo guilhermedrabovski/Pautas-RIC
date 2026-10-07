@@ -3,9 +3,12 @@ import path from "path";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import admin from "firebase-admin";
+import { getFirestore } from "firebase-admin/firestore";
 import * as dotenv from "dotenv";
 
 dotenv.config();
+
+let adminDb: any = null;
 
 // Initialize Firebase Admin
 try {
@@ -50,9 +53,18 @@ try {
     admin.initializeApp();
     console.log("Firebase Admin initialized with default credentials");
   }
+
+  try {
+    adminDb = getFirestore(admin.app(), 'ai-studio-a3e37355-c186-4410-98d3-4bcb5905e5c4');
+    console.log("Admin Firestore connected to ai-studio-a3e37355-c186-4410-98d3-4bcb5905e5c4");
+  } catch (fsErr: any) {
+    console.warn("Could not bind named Firestore to Admin:", fsErr.message);
+  }
 } catch (e: any) {
   console.log("Firebase Admin initialization error:", e.message);
 }
+
+const RIC_LOGO_URL = 'https://media.licdn.com/dms/image/v2/C4D0BAQG1MVAq9NsJmQ/company-logo_200_200/company-logo_200_200/0/1678299841092/gruporicpr_logo?e=2147483647&v=beta&t=i7G-u_n_6wi5V3PI3ZLF3LfYC_dNwzDjnkMZGMSDKyo';
 
 async function startServer() {
   const app = express();
@@ -76,24 +88,147 @@ async function startServer() {
 
   // API routes FIRST
   app.post("/api/send-notification", async (req, res) => {
-    const { tokens, title, body } = req.body;
+    const { tokens, title, body, isUrgent, url, data } = req.body;
 
-    if (!tokens || !tokens.length) {
+    if (!tokens || !Array.isArray(tokens) || !tokens.length) {
       return res.status(400).json({ error: "No tokens provided" });
     }
 
+    const uniqueTokens = Array.from(new Set(tokens.filter((t: any) => typeof t === 'string' && t.trim().length > 10)));
+    if (!uniqueTokens.length) {
+      return res.status(400).json({ error: "Nenhum token válido fornecido" });
+    }
+
     try {
+      const isUrgentBool = isUrgent === true || isUrgent === 'true';
       const response = await admin.messaging().sendEachForMulticast({
-        tokens: tokens,
+        tokens: uniqueTokens,
         notification: {
           title,
           body,
+        },
+        data: {
+          title: String(title || ''),
+          body: String(body || ''),
+          isUrgent: isUrgentBool ? 'true' : 'false',
+          url: url || '/ilhas-de-edicao',
+          ...(data || {})
+        },
+        webpush: {
+          headers: {
+            Urgency: isUrgentBool ? 'high' : 'normal',
+          },
+          notification: {
+            title,
+            body,
+            icon: RIC_LOGO_URL,
+            badge: RIC_LOGO_URL,
+            vibrate: isUrgentBool ? [400, 150, 400, 150, 700] : [200, 100, 200],
+            requireInteraction: isUrgentBool,
+            tag: isUrgentBool ? `urgent-pauta-${Date.now()}` : undefined,
+            renotify: true,
+          },
+          fcmOptions: {
+            link: url || '/ilhas-de-edicao',
+          },
         },
       });
       res.json({ success: true, response });
     } catch (error: any) {
       console.error("Error sending notification:", error);
       res.status(500).json({ error: error?.message || "Failed to send notification" });
+    }
+  });
+
+  // Specialized route to broadcast urgent pauta alerts to editors
+  app.post("/api/notify-urgent-pauta", async (req, res) => {
+    const { title, editorId, editorName, pautaId, url } = req.body;
+
+    try {
+      let targetTokens: string[] = [];
+
+      if (adminDb) {
+        if (editorId) {
+          // Specific editor assigned
+          const userDoc = await adminDb.collection("users").doc(editorId).get();
+          if (userDoc.exists && Array.isArray(userDoc.data()?.fcmTokens)) {
+            targetTokens.push(...userDoc.data().fcmTokens);
+          } else {
+            // Find user where uid or name matches
+            const snap = await adminDb.collection("users").get();
+            snap.forEach((d: any) => {
+              const u = d.data();
+              const idMatches = d.id.toLowerCase() === editorId.toLowerCase() || (u.uid && u.uid.toLowerCase() === editorId.toLowerCase());
+              const nameMatches = u.name && editorName && u.name.toLowerCase().includes(editorName.toLowerCase());
+              if ((idMatches || nameMatches) && Array.isArray(u.fcmTokens)) {
+                targetTokens.push(...u.fcmTokens);
+              }
+            });
+          }
+        } else {
+          // Unassigned urgent pauta -> notify all editors
+          const snap = await adminDb.collection("users").get();
+          snap.forEach((d: any) => {
+            const u = d.data();
+            const isEditor = u.role === 'editor' || 
+              (u.name && ['jamir','jean','zand','valdeilton','marcos','paulo','lucas'].some((n: string) => u.name.toLowerCase().includes(n)));
+            if (isEditor && Array.isArray(u.fcmTokens)) {
+              targetTokens.push(...u.fcmTokens);
+            }
+          });
+        }
+      }
+
+      const uniqueTokens = Array.from(new Set(targetTokens.filter((t: any) => typeof t === 'string' && t.trim().length > 10)));
+      if (uniqueTokens.length === 0) {
+        return res.json({ success: true, count: 0, message: "Nenhum editor com token Web Push ativo no momento." });
+      }
+
+      const notifTitle = editorId
+        ? `🚨 PAUTA URGENTE ATRIBUÍDA: ${title}`
+        : `🚨 RETRANCA URGENTE NA FILA ABERTA!`;
+
+      const notifBody = editorId
+        ? `${editorName || 'Editor'}, a matéria "${title}" requer edição imediata na sua ilha!`
+        : `A matéria urgente "${title}" está aguardando editor livre na Central RIC.`;
+
+      const response = await admin.messaging().sendEachForMulticast({
+        tokens: uniqueTokens,
+        notification: {
+          title: notifTitle,
+          body: notifBody,
+        },
+        data: {
+          title: notifTitle,
+          body: notifBody,
+          isUrgent: 'true',
+          pautaId: String(pautaId || ''),
+          url: url || '/ilhas-de-edicao',
+        },
+        webpush: {
+          headers: {
+            Urgency: 'high',
+          },
+          notification: {
+            title: notifTitle,
+            body: notifBody,
+            icon: RIC_LOGO_URL,
+            badge: RIC_LOGO_URL,
+            vibrate: [400, 150, 400, 150, 700],
+            requireInteraction: true,
+            tag: pautaId ? `urgent-pauta-${pautaId}` : `urgent-${Date.now()}`,
+            renotify: true,
+          },
+          fcmOptions: {
+            link: url || '/ilhas-de-edicao',
+          },
+        },
+      });
+
+      return res.json({ success: true, count: uniqueTokens.length, response });
+    } catch (err: any) {
+      console.error("Error in /api/notify-urgent-pauta:", err);
+      return res.status(500).json({ error: err.message });
     }
   });
 

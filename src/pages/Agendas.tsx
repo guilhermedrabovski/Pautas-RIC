@@ -107,27 +107,42 @@ export default function Agendas() {
     XLSX.writeFile(wb, `mochilinks-todas-pautas.xlsx`);
   }
 
-  const renderCard = (a: any) => (
-    <div key={a.id} className={`bg-ric-card border-b border-ric-border px-[15px] py-[12px] flex flex-col gap-2 relative group ${
-      a.continuing ? 'bg-[#FFF5F5] border-l-4 border-l-ric-red' : 
-      a.audienceSuccess ? 'bg-[#FFF8E1] border-l-4 border-l-ric-yellow' : 
-      'border-l-4 border-l-transparent'
+  const renderCard = (a: any) => {
+    const isUrgent = a.priority === 'alta';
+    return (
+    <div key={a.id} className={`border-b px-[15px] py-[12px] flex flex-col gap-2 relative group transition-all ${
+      isUrgent ? 'bg-red-50/90 border-l-4 border-l-red-600 border-red-200 ring-2 ring-red-500/20 shadow-xs' :
+      a.continuing ? 'bg-[#FFF5F5] border-l-4 border-l-ric-red border-ric-border' : 
+      a.audienceSuccess ? 'bg-[#FFF8E1] border-l-4 border-l-ric-yellow border-ric-border' : 
+      'bg-ric-card border-l-4 border-l-transparent border-ric-border'
     }`}>
       <div className="flex justify-between items-start">
         <div className="flex-1">
-          <div className="flex items-center space-x-2 mb-1">
-             <span className="font-mono text-[11px] bg-ric-bg text-ric-blue px-1 py-[2px] rounded-[3px] font-bold text-center">{a.slug}</span>
-             {a.continuing && <span className="text-[9px] bg-ric-red text-white px-1 py-[1px] rounded-[2px] uppercase ml-1">Continuidade</span>}
+          <div className="flex items-center flex-wrap gap-1.5 mb-1">
+             <span className="font-mono text-[11px] bg-ric-bg text-ric-blue px-1.5 py-[2px] rounded-[3px] font-bold text-center">{a.slug}</span>
+             {isUrgent && (
+               <span className="text-[10px] bg-red-600 text-white font-black px-2 py-0.5 rounded-full uppercase flex items-center gap-1 shadow-xs animate-pulse ring-2 ring-red-400">
+                 <Flame size={12} fill="white" /> URGENTE
+               </span>
+             )}
+             {a.continuing && <span className="text-[9px] bg-ric-red text-white px-1.5 py-[1px] rounded-[2px] uppercase">Continuidade</span>}
              {a.isMochilink && <span className="text-[10px] bg-[#E3F2FD] text-[#1976D2] px-[6px] py-[2px] rounded-[10px] font-bold inline-block">Mochilink</span>}
           </div>
-          <h4 className="text-[14px] font-bold text-ric-text leading-tight mb-1">{a.title}</h4>
+          <h4 className={`text-[14px] font-bold leading-tight mb-1 ${isUrgent ? 'text-red-950 font-black' : 'text-ric-text'}`}>
+            {a.title}
+          </h4>
           <p className="text-[12px] text-ric-muted mt-1 line-clamp-2">Criado por: {getUserName(a.suggestedBy) || 'N/A'}</p>
           {a.updatedByName && (
             <p className="text-[10px] text-ric-muted/70 italic">Última alteração por: {a.updatedByName}</p>
           )}
         </div>
         <div className="flex flex-col items-end pl-2">
-          {a.priority === 'alta' && <div className="flex items-center text-[11px] text-ric-red"><span className="w-1.5 h-1.5 bg-ric-red rounded-full mr-1"></span>Alta Prioridade</div>}
+          {isUrgent ? (
+            <span className="px-2 py-0.5 rounded-md bg-red-600 text-white text-[10px] font-black uppercase flex items-center gap-1 shadow-xs">
+              <span className="w-2 h-2 bg-white rounded-full animate-ping"></span>
+              Prioridade Máxima
+            </span>
+          ) : null}
           {a.audienceSuccess && <div className="text-[11px] text-[#D48806] font-medium mt-1">Destaque 📈</div>}
           {(userData?.role === 'admin' || userData?.role === 'editor' || userData?.role === 'pauteiro' || userData?.role === 'pauteira' || a.suggestedBy === userData?.uid) && (
             <button onClick={() => { setEditingAgenda(a); setIsFormOpen(true); }} className="text-ric-muted hover:text-ric-red opacity-0 group-hover:opacity-100 transition-opacity p-1 mt-2">
@@ -155,7 +170,8 @@ export default function Agendas() {
         )}
       </div>
     </div>
-  );
+    );
+  };
 
   return (
     <div className="space-y-[15px]">

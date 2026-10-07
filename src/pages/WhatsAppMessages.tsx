@@ -1208,6 +1208,7 @@ function MessageCard({
   onCopyPhone,
   getUserName
 }: {
+  key?: React.Key;
   msg: WhatsAppMessage;
   onConvert: (m: WhatsAppMessage) => void;
   onUpdateStatus: (id: string, s: WhatsAppMessage['status']) => void;

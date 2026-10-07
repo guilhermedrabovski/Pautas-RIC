@@ -1,14 +1,67 @@
 import { useEffect, useRef } from 'react';
 import { getToken, onMessage } from 'firebase/messaging';
-import { doc, updateDoc, arrayUnion, collection, query, onSnapshot } from 'firebase/firestore';
+import { doc, setDoc, arrayUnion, collection, query, onSnapshot } from 'firebase/firestore';
 import { messaging, db } from '../lib/firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { toast } from 'react-hot-toast';
 import { playSuccessChime, speakEditorAssignment, speakUnassignedUrgentAnnouncement } from '../lib/soundChime';
 
+const LOGO_URL = 'https://media.licdn.com/dms/image/v2/C4D0BAQG1MVAq9NsJmQ/company-logo_200_200/company-logo_200_200/0/1678299841092/gruporicpr_logo?e=2147483647&v=beta&t=i7G-u_n_6wi5V3PI3ZLF3LfYC_dNwzDjnkMZGMSDKyo';
+
+export const getVapidKey = () => {
+  const envKey = (import.meta as any).env.VITE_VAPID_KEY;
+  return envKey || 'BJk0w20G8WKfX2UPyhQTbuyPeq-dG9VrdQS1nkOXq9seLH0yI8JMx3y3yEjkxn_avr2ur1n8c8HHHdbWuoN72SI';
+};
+
+/**
+ * Registers device FCM token in Firestore users collection
+ */
+export const registerDeviceToken = async (userData: any, showToasts: boolean = true) => {
+  if (!userData?.uid || !messaging) return null;
+  if (!('Notification' in window)) return null;
+
+  try {
+    const vapidKey = getVapidKey();
+    let registration = await navigator.serviceWorker.getRegistration('/firebase-messaging-sw.js');
+    if (!registration) {
+      registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js', { scope: '/' });
+    }
+    await navigator.serviceWorker.ready;
+
+    const token = await getToken(messaging, {
+      vapidKey,
+      serviceWorkerRegistration: registration,
+    });
+
+    if (token) {
+      const userRef = doc(db, 'users', userData.uid);
+      await setDoc(
+        userRef,
+        {
+          fcmTokens: arrayUnion(token),
+          lastDeviceSeenAt: new Date().toISOString(),
+        },
+        { merge: true }
+      );
+
+      localStorage.setItem('ric_fcm_token', token);
+      if (showToasts) {
+        toast.success('Dispositivo registrado para Web Push com sucesso!');
+      }
+      return token;
+    }
+  } catch (err: any) {
+    console.warn('Erro ao registrar token do dispositivo:', err);
+    if (showToasts) {
+      toast.error(`Falha ao registrar Web Push: ${err.message || 'Erro de configuração'}`);
+    }
+  }
+  return null;
+};
+
 export const requestNotificationPermission = async (userData: any) => {
-  if (!userData || !messaging) {
-    toast.error('Erro: Usuário não autenticado ou mensagens não suportadas.');
+  if (!userData) {
+    toast.error('Erro: Usuário não autenticado.');
     return;
   }
 
@@ -16,78 +69,75 @@ export const requestNotificationPermission = async (userData: any) => {
   const isStandalone = window.matchMedia('(display-mode: standalone)').matches || (window.navigator as any).standalone;
 
   if (isIOS && !isStandalone) {
-    toast.error('No iPhone, as notificações só funcionam no App Instalado. Clique no botão de Compartilhar do Safari (quadrado com seta para cima) -> "Adicionar à Tela de Início". Depois, abra o aplicativo pela sua tela inicial e tente novamente.', { duration: 15000 });
+    toast.error('No iPhone, as notificações web exigem o App Adicionado à Tela de Início.', { duration: 12000 });
     return;
   }
 
   if (!('Notification' in window)) {
-    toast.error('Este dispositivo não suporta notificações web ou precisa de configuração.', { duration: 10000 });
+    toast.error('Este navegador não suporta notificações Push.', { duration: 8000 });
     return;
   }
-  
+
   try {
-    Notification.requestPermission().then(async (permission) => {
-      if (permission === 'granted') {
-        const rawVapidKey = (import.meta as any).env.VITE_VAPID_KEY;
-        const vapidKey = rawVapidKey || 'BJk0w20G8WKfX2UPyhQTbuyPeq-dG9VrdQS1nkOXq9seLH0yI8JMx3y3yEjkxn_avr2ur1n8c8HHHdbWuoN72SI';
-        
-        if (!vapidKey) {
-          toast.error('Erro de configuração do servidor (Vapid Key). Contate o suporte.');
-          return;
-        }
-
-        if (!rawVapidKey) {
-          toast.loading('Usando configuração de teste. Caso falte permissão ao se conectar ao Firebase, adicione VITE_VAPID_KEY no .env ou nos Segredos.', { duration: 6000 });
-        } else {
-          toast.success('Permissão concedida. Registrando dispositivo...');
-        }
-
-        try {
-          const registration = await navigator.serviceWorker.ready;
-          
-          const token = await getToken(messaging, {
-            vapidKey: vapidKey,
-            serviceWorkerRegistration: registration
-          });
-
-          if (token) {
-            const userRef = doc(db, 'users', userData.uid);
-            await updateDoc(userRef, {
-              fcmTokens: arrayUnion(token)
-            });
-            toast.success('Notificações vinculadas ao seu dispositivo com sucesso!');
-            console.log('FCM Token registered', token);
-          } else {
-            toast.error('Ocorreu um erro ao gerar a credencial do dispositivo.');
-          }
-        } catch (e: any) {
-          console.error(e);
-          let userFriendlyMessage = `Erro ao obter token: ${e.message}`;
-          const isExpectedPatternError = e.message?.includes('The string did not match the expected pattern') || e.name === 'SyntaxError';
-          
-          if (isExpectedPatternError) {
-            userFriendlyMessage = 'A Chave VAPID de teste não pertence ao seu projeto do Firebase. Obtenha a "Web Push Certificate" correta nas configurações do seu site Firebase Console e salve a variável VITE_VAPID_KEY.';
-          }
-          toast.error(userFriendlyMessage, { duration: 15000 });
-        }
-      } else if (permission === 'denied') {
-        toast.error('Você negou a permissão de notificação neste navegador.');
+    const permission = await Notification.requestPermission();
+    if (permission === 'granted') {
+      toast.loading('Registrando chave Web Push...', { id: 'push-register' });
+      const token = await registerDeviceToken(userData, false);
+      if (token) {
+        toast.success('🔔 Notificações ativadas! Você receberá alertas mesmo com a aba em segundo plano.', { id: 'push-register', duration: 7000 });
+      } else {
+        toast.success('Permissão concedida pelo navegador!', { id: 'push-register' });
       }
-    }).catch(err => {
-      console.error(err);
-      toast.error('Erro ao pedir permissão ao navegador.');
-    });
+    } else if (permission === 'denied') {
+      toast.error('Notificações bloqueadas nas configurações do seu navegador.');
+    }
   } catch (error: any) {
-    console.error('Error getting notification token:', error);
+    console.error('Error requesting notification permission:', error);
+    toast.error('Erro ao pedir permissão ao navegador.');
+  }
+};
+
+/**
+ * Triggers a desktop notification using the active Service Worker
+ */
+export const triggerLocalNotification = (title: string, options: any = {}) => {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+
+  const fullOptions: any = {
+    icon: LOGO_URL,
+    badge: LOGO_URL,
+    vibrate: [300, 100, 300, 100, 500],
+    ...options,
+  };
+
+  if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+    navigator.serviceWorker.ready.then((reg) => {
+      reg.showNotification(title, fullOptions);
+    }).catch(() => {
+      new Notification(title, fullOptions);
+    });
+  } else {
+    try {
+      new Notification(title, fullOptions);
+    } catch (e) {
+      console.warn("Could not fire desktop notification:", e);
+    }
   }
 };
 
 export default function NotificationHandler() {
   const { userData } = useAuth();
-  const prevRetrancasRef = useRef<Map<string, { status: string; editorId: string }>>(new Map());
+  const prevRetrancasRef = useRef<Map<string, { status: string; editorId: string; isUrgent?: boolean }>>(new Map());
   const initialSyncRef = useRef(true);
 
-  // Monitor retrancas in real time across the entire app
+  // Auto-sync FCM token silently if user has already granted permission
+  useEffect(() => {
+    if (userData?.uid && 'Notification' in window && Notification.permission === 'granted') {
+      registerDeviceToken(userData, false).catch(() => {});
+    }
+  }, [userData?.uid]);
+
+  // Monitor retrancas in real time across the entire newsroom
   useEffect(() => {
     if (!userData?.uid) return;
 
@@ -101,8 +151,8 @@ export default function NotificationHandler() {
     };
 
     const q = query(collection(db, 'retrancas'));
-    const unsubRetrancas = onSnapshot(q, snap => {
-      snap.docs.forEach(d => {
+    const unsubRetrancas = onSnapshot(q, (snap) => {
+      snap.docs.forEach((d) => {
         const data = d.data();
         const prev = prevRetrancasRef.current.get(d.id);
 
@@ -112,42 +162,75 @@ export default function NotificationHandler() {
           const isNowAssignedToMe = isMatchMe(data.editorId);
           const wasAssignedToMe = prev && isMatchMe(prev.editorId);
 
-          // 1. Voice Announcement: Brand NEW UNASSIGNED URGENT retranca -> announce to everyone!
+          // 1. Voice Announcement & Desktop Alert: Brand NEW UNASSIGNED URGENT retranca -> announce to everyone!
           if (!prev && isUnassigned && isUrgent) {
             speakUnassignedUrgentAnnouncement(data.title);
             toast.error(`🚨 RETRANCA URGENTE NA FILA ABERTA: ${data.title}!`, { duration: 9000 });
+
+            // Display OS notification even if tab is in the background
+            triggerLocalNotification(`🚨 RETRANCA URGENTE NA FILA ABERTA!`, {
+              body: `A matéria "${data.title}" aguarda um editor livre na Central RIC.`,
+              requireInteraction: true,
+              tag: `urgent-open-${d.id}`,
+            });
           }
 
-          // 2. Voice Announcement when a retranca is assigned to the current user (Editor)
+          // 2. Voice Announcement & Desktop Alert when a retranca is assigned to the current user (Editor)
           else if (isNowAssignedToMe && (!wasAssignedToMe || (prev && prev.editorId !== data.editorId))) {
-            // Trigger spoken voice announcement with editor name (with urgency stress if urgent!)
             speakEditorAssignment(data.editorId || userData.name || 'Editor', data.title, isUrgent);
+            
+            const alertTitle = isUrgent 
+              ? `🚨 PAUTA URGENTE ATRIBUÍDA A VOCÊ!` 
+              : `🎬 Nova Matéria Atribuída`;
+            const alertBody = isUrgent
+              ? `URGENTE: "${data.title}" requer atenção prioritária na sua ilha!`
+              : `"${data.title}" foi atribuída à sua ilha de edição.`;
+
+            if (isUrgent) {
+              toast.error(alertBody, { duration: 10000 });
+            } else {
+              toast.success(alertBody, { duration: 6000 });
+            }
+
+            // Desktop push notification for the editor
+            triggerLocalNotification(alertTitle, {
+              body: alertBody,
+              requireInteraction: isUrgent,
+              tag: `assigned-${d.id}`,
+            });
           }
 
           // 3. Alert creator when VT is completed
           if (prev && prev.status !== 'concluido' && data.status === 'concluido') {
-            const isCreator = data.createdBy === userData.uid || 
+            const isCreator =
+              data.createdBy === userData.uid ||
               (userData.name && data.createdByName?.toLowerCase() === userData.name.toLowerCase()) ||
               (userData.email && userData.email.toLowerCase().includes('guilherme'));
 
             if (isCreator && data.editorId !== userData.uid) {
               playSuccessChime();
-              toast.success(
-                `🎬 VT Concluído! O editor finalizou a matéria: "${data.title}"`,
-                { duration: 10000, position: 'top-right' }
-              );
+              toast.success(`🎬 VT Concluído! O editor finalizou a matéria: "${data.title}"`, {
+                duration: 10000,
+                position: 'top-right',
+              });
+
+              triggerLocalNotification(`🎬 VT Concluído!`, {
+                body: `O editor finalizou a matéria: "${data.title}"`,
+                tag: `done-${d.id}`,
+              });
             }
           }
         }
 
         prevRetrancasRef.current.set(d.id, {
           status: data.status,
-          editorId: data.editorId || ''
+          editorId: data.editorId || '',
+          isUrgent: !!data.isUrgent,
         });
       });
       initialSyncRef.current = false;
-    }, err => {
-      console.warn("Retrancas notification sync:", err);
+    }, (err) => {
+      console.warn('Retrancas notification sync:', err);
     });
 
     return () => unsubRetrancas();
@@ -158,12 +241,16 @@ export default function NotificationHandler() {
 
     // Foreground message handler
     const unsubOnMessage = onMessage(messaging, (payload) => {
-      console.log('Message received in foreground:', payload);
+      console.log('FCM Foreground message:', payload);
       if (payload.notification) {
-        toast.success(`${payload.notification.title}: ${payload.notification.body}`, {
-          duration: 5000,
-          position: 'top-right'
-        });
+        toast(
+          `${payload.notification.title || 'Notificação'}: ${payload.notification.body || ''}`,
+          {
+            icon: '🔔',
+            duration: 6000,
+            position: 'top-right',
+          }
+        );
       }
     });
 

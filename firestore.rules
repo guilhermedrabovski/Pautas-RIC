@@ -148,5 +148,10 @@ service cloud.firestore {
       allow update: if true;
       allow delete: if true;
     }
+
+    match /system_settings/{settingId} {
+      allow read: if true;
+      allow write: if true;
+    }
   }
 }

@@ -303,9 +303,22 @@ export default function EditorWorkloadWidget({
                     )}
                   </div>
                 ) : (
-                  <div className="bg-blue-50/70 border border-blue-200/80 rounded-lg p-2 space-y-1">
-                    <div className="text-[11px] font-black text-blue-950 uppercase line-clamp-1" title={currentRetranca?.title}>
-                      {currentRetranca?.title || 'Retranca em produção'}
+                  <div className={`rounded-lg p-2 space-y-1 transition-all ${
+                    currentRetranca?.isUrgent 
+                      ? 'bg-red-50 border-2 border-red-500 ring-2 ring-red-400/30' 
+                      : 'bg-blue-50/70 border border-blue-200/80'
+                  }`}>
+                    <div className="flex items-center justify-between gap-1">
+                      <div className={`text-[11px] font-black uppercase line-clamp-1 ${
+                        currentRetranca?.isUrgent ? 'text-red-950 font-black' : 'text-blue-950'
+                      }`} title={currentRetranca?.title}>
+                        {currentRetranca?.title || 'Retranca em produção'}
+                      </div>
+                      {currentRetranca?.isUrgent && (
+                        <span className="shrink-0 text-[8px] font-black uppercase bg-red-600 text-white px-1.5 py-0.5 rounded-full flex items-center gap-0.5 animate-pulse shadow-xs">
+                          <Flame size={9} fill="white" /> URGENTE
+                        </span>
+                      )}
                     </div>
                     <div className="flex items-center justify-between text-[10px] text-blue-700 font-bold">
                       <span className="flex items-center gap-1">

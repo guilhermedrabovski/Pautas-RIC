@@ -164,6 +164,50 @@ export function speakEditorAssignment(editorNameOrId: string, retrancaTitle?: st
 }
 
 /**
+ * Distinct bright chime for user @mentions in chat
+ */
+export function playMentionChime() {
+  try {
+    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    const now = ctx.currentTime;
+
+    // Distinct triple-bell chime with harmonics (G5 -> C6 -> E6)
+    const tones = [783.99, 1046.50, 1318.51];
+    tones.forEach((freq, idx) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      const startTime = now + idx * 0.08;
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, startTime);
+      gain.gain.setValueAtTime(0.35, startTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, startTime + 0.45);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(startTime);
+      osc.stop(startTime + 0.45);
+    });
+  } catch (e) {}
+}
+
+/**
+ * Spoken alert when the user is tagged with @mention in the newsroom chat
+ */
+export function speakUserMentionAnnouncement(senderName?: string) {
+  try {
+    playMentionChime();
+    const who = senderName ? `por ${senderName}` : 'da redação';
+    const textToSpeak = `Atenção, você foi mencionado no chat ${who}.`;
+    setTimeout(() => {
+      speakUtterance(textToSpeak, 1.05);
+    }, 450);
+  } catch (err) {
+    console.warn('Speech mention error:', err);
+  }
+}
+
+/**
  * Broadcast voice alert to ALL editors when an UNASSIGNED URGENT retranca is created in the queue!
  */
 export function speakUnassignedUrgentAnnouncement(retrancaTitle?: string) {

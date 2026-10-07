@@ -11,6 +11,7 @@ import { confirmAction } from '../lib/confirmHelper';
 import EditorWorkloadWidget from '../components/EditorWorkloadWidget';
 import { IMAGE_EDITORS_LIST } from '../lib/constants';
 import { playSuccessChime, speakEditorAssignment, speakUnassignedUrgentAnnouncement } from '../lib/soundChime';
+import { notifyUrgentPautaPush } from '../lib/notifications';
 
 export default function Dashboard() {
   const { userData, users } = useAuth();
@@ -169,6 +170,17 @@ export default function Dashboard() {
       } else {
         playSuccessChime();
       }
+
+      if (assignIsUrgent) {
+        notifyUrgentPautaPush({
+          title: assignTitle.trim().toUpperCase(),
+          editorId: assignEditorId || '',
+          editorName: editorObj?.name,
+          isUrgent: true,
+          url: '/ilhas-de-edicao',
+        }).catch(err => console.warn('Erro ao disparar Web Push no Dashboard:', err));
+      }
+
       toast.success(`Pauta atribuída com sucesso para ${editorObj?.name || assignEditorId}!`);
       setIsAssignModalOpen(false);
       setAssignTitle('');
