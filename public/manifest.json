@@ -1,0 +1,15 @@
+{
+  "short_name": "RIC Pautas",
+  "name": "Central de Pautas RIC",
+  "icons": [
+    {
+      "src": "https://media.licdn.com/dms/image/v2/C4D0BAQG1MVAq9NsJmQ/company-logo_200_200/company-logo_200_200/0/1678299841092/gruporicpr_logo?e=2147483647&v=beta&t=i7G-u_n_6wi5V3PI3ZLF3LfYC_dNwzDjnkMZGMSDKyo",
+      "type": "image/png",
+      "sizes": "200x200"
+    }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#E60000",
+  "background_color": "#f4f4f5"
+}

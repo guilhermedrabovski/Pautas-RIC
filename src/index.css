@@ -1,0 +1,21 @@
+/* Central RIC colors and UI extensions */
+@import "tailwindcss";
+
+@theme {
+  --color-ric-red: #E30613;
+  --color-ric-blue: #003366;
+  --color-ric-bg: #F0F2F5;
+  --color-ric-card: #FFFFFF;
+  --color-ric-text: #1C1E21;
+  --color-ric-muted: #65676B;
+  --color-ric-border: #DADDE1;
+  --color-ric-green: #42B72A;
+  --color-ric-yellow: #F7B924;
+  --font-sans: "Segoe UI", Helvetica, Arial, sans-serif;
+}
+
+body {
+  background-color: var(--color-ric-bg);
+  color: var(--color-ric-text);
+  font-family: var(--font-sans);
+}

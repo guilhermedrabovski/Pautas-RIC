@@ -1,0 +1,138 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Phase 3: Primitive Definition
+    function isSignedIn() { return request.auth != null; }
+    
+    function isAdmin() { 
+      return isSignedIn() && 
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+    
+    function isEditorOrAdmin() {
+      return isSignedIn() && 
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'editor', 'pauteiro', 'pauteira']);
+    }
+
+    function existing() { return resource.data; }
+    function incoming() { return request.resource.data; }
+    function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
+
+    // Note: Due to limitations of what users can log in as via UI, we will allow read for all authenticated users to everything for this MVP, but writes are restricted.
+    // For a real production app, `users` collection would restrict read.
+
+    match /users/{userId} {
+      // Allow user to read all users to show in dropdowns, only if signed in
+      allow read: if isSignedIn();
+      // Allow users to update their own profile, or admins
+      allow update: if isSignedIn() && (request.auth.uid == userId || isAdmin())
+                    && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'email', 'role', 'createdAt', 'fcmTokens']);
+      allow create: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    match /agendas/{agendaId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && incoming().keys().hasAll(['title', 'slug', 'description', 'status', 'priority', 'continuing', 'date', 'suggestedBy', 'createdAt', 'updatedAt']);
+      allow update: if isSignedIn() && (isEditorOrAdmin() || existing().suggestedBy == request.auth.uid || existing().reporterId == request.auth.uid)
+                    && incoming().diff(existing()).affectedKeys().hasOnly(['title', 'slug', 'description', 'status', 'priority', 'continuing', 'date', 'reporterId', 'cinegrafistaId', 'audienceSuccess', 'isMochilink', 'updatedAt', 'taskStatus', 'updatedBy', 'updatedByName', 'suggestedBy', 'createdAt', 'id']);
+      allow delete: if isAdmin() || isEditorOrAdmin();
+    }
+
+    match /reminders/{reminderId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && incoming().fromId == request.auth.uid;
+      allow update: if isSignedIn();
+      allow delete: if isSignedIn() && (existing().fromId == request.auth.uid || existing().toId == request.auth.uid);
+    }
+
+    match /schedules/{scheduleId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && (isEditorOrAdmin() || isAdmin());
+      allow update: if isSignedIn();
+      allow delete: if isSignedIn() && (isEditorOrAdmin() || isAdmin());
+    }
+
+    match /pauteiroSchedules/{scheduleId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && (isEditorOrAdmin() || isAdmin());
+      allow update: if isSignedIn();
+      allow delete: if isSignedIn() && (isEditorOrAdmin() || isAdmin());
+    }
+
+    match /lineup/{lineupId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && (isEditorOrAdmin() || isAdmin());
+    }
+
+    match /shiftTrades/{tradeId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+      allow update: if isSignedIn();
+      allow delete: if isSignedIn();
+    }
+
+    match /scale_meta/{document=**} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && (isEditorOrAdmin() || isAdmin());
+    }
+
+    match /settings/{document=**} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && isAdmin();
+    }
+
+    match /handovers/{handoverId} {
+      allow read: if isSignedIn();
+      allow create, delete: if isEditorOrAdmin();
+      allow update: if isSignedIn(); // Allow updating for tasks status
+    }
+
+    match /checklistTemplates/{templateId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+      allow update, delete: if isSignedIn();
+    }
+
+    match /checklistRuns/{runId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+      allow update: if isSignedIn();
+      allow delete: if isSignedIn();
+    }
+    match /checklists/{listId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && (isEditorOrAdmin() || isAdmin());
+      // Allow users to update checklists (e.g. marking as complete)
+      allow update: if isSignedIn();
+    }
+
+    match /tasks/{taskId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+      allow update: if isSignedIn(); 
+      allow delete: if isSignedIn();
+    }
+
+    match /stories/{storyId} {
+      allow read: if isSignedIn();
+      allow create: if isEditorOrAdmin();
+      allow update: if isEditorOrAdmin();
+      allow delete: if isAdmin();
+    }
+
+    match /whatsapp_messages/{messageId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+      allow update: if isSignedIn() && (isEditorOrAdmin() || existing().createdBy == request.auth.uid);
+      allow delete: if isEditorOrAdmin();
+    }
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "name": "Central de Pautas RIC",
+  "description": "Sistema de gestão de pautas, escalas, lembretes e rotinas da redação RIC.",
+  "requestFramePermissions": [
+    "notifications"
+  ],
+  "majorCapabilities": []
+}

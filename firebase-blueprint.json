@@ -1,0 +1,176 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile data.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["reporter", "pauteiro", "pauteira", "editor", "admin", "cinegrafista"] },
+        "isActive": { "type": "boolean" },
+        "fcmTokens": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["name", "email", "role"]
+    },
+    "Agenda": {
+      "title": "Agenda",
+      "description": "News agenda / pauta.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "slug": { "type": "string" },
+        "description": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "priority": { "type": "string", "enum": ["baixa", "media", "alta"] },
+        "continuing": { "type": "boolean" },
+        "date": { "type": "string" },
+        "suggestedBy": { "type": "string" },
+        "reporterId": { "type": "string" },
+        "cinegrafistaId": { "type": "string" },
+        "audienceSuccess": { "type": "boolean" },
+        "isMochilink": { "type": "boolean" },
+        "createdAt": { "type": "number" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["title", "slug", "description", "status", "priority", "continuing", "date", "suggestedBy", "createdAt", "updatedAt"]
+    },
+    "Reminder": {
+      "title": "Reminder",
+      "description": "System reminders between users.",
+      "type": "object",
+      "properties": {
+        "text": { "type": "string" },
+        "fromId": { "type": "string" },
+        "toId": { "type": "string" },
+        "read": { "type": "boolean" },
+        "createdAt": { "type": "number" },
+        "replyToId": { "type": "string" }
+      },
+      "required": ["text", "fromId", "toId", "read", "createdAt"]
+    },
+    "Schedule": {
+      "title": "Schedule",
+      "description": "Shift schedule for reporters and cinegrafistas.",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string" },
+        "shift": { "type": "string" },
+        "time": { "type": "string" },
+        "reporterId": { "type": "string" },
+        "cinegrafistaId": { "type": "string" },
+        "createdAt": { "type": "number" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["date", "shift", "time", "reporterId", "createdAt", "updatedAt"]
+    },
+    "Handover": {
+      "title": "Handover",
+      "description": "Shift handover report.",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string" },
+        "shift": { "type": "string" },
+        "content": { "type": "string" },
+        "suggestions": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["date", "shift", "content", "suggestions", "createdBy", "createdAt"]
+    },
+    "ChecklistTemplate": {
+      "title": "ChecklistTemplate",
+      "description": "Customizable checklist items for users.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "items": { 
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["userId", "items", "updatedAt"]
+    },
+    "ChecklistRun": {
+      "title": "ChecklistRun",
+      "description": "Daily checklist completion state.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "date": { "type": "string" },
+        "completedItems": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["userId", "date", "completedItems", "updatedAt"]
+    },
+    "WhatsAppMessage": {
+      "title": "WhatsAppMessage",
+      "description": "Messages received via WhatsApp for news filtering.",
+      "type": "object",
+      "properties": {
+        "subject": { "type": "string" },
+        "description": { "type": "string" },
+        "pauteiraId": { "type": "string" },
+        "phone": { "type": "string" },
+        "journal": { "type": "string", "enum": ["BG", "Cidade Alerta"] },
+        "status": { "type": "string", "enum": ["pendente", "resolvido", "pauta", "descartado"] },
+        "attachments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "url": { "type": "string" },
+              "type": { "type": "string" }
+            }
+          }
+        },
+        "createdAt": { "type": "number" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["subject", "pauteiraId", "journal", "status", "createdAt"]
+    }
+  },
+  "firestore": {
+    "users/{userId}": {
+      "schema": "User",
+      "description": "User profiles."
+    },
+    "agendas/{agendaId}": {
+      "schema": "Agenda",
+      "description": "Submitted agendas."
+    },
+    "reminders/{reminderId}": {
+      "schema": "Reminder",
+      "description": "User reminders/notifications."
+    },
+    "schedules/{scheduleId}": {
+      "schema": "Schedule",
+      "description": "Shift schedules."
+    },
+    "handovers/{handoverId}": {
+      "schema": "Handover",
+      "description": "Shift handovers."
+    },
+    "checklistTemplates/{templateId}": {
+      "schema": "ChecklistTemplate",
+      "description": "Templates for checklists."
+    },
+    "checklistRuns/{runId}": {
+      "schema": "ChecklistRun",
+      "description": "Daily checklist runs."
+    },
+    "whatsapp_messages/{messageId}": {
+      "schema": "WhatsAppMessage",
+      "description": "Filtered WhatsApp messages."
+    }
+  }
+}
