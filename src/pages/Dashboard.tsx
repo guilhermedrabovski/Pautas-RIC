@@ -4,11 +4,13 @@ import { db } from '../lib/firebase';
 import { isUserScaleOwner, getDisplayNames } from '../lib/userUtils';
 import { useAuth, UserData } from '../contexts/AuthContext';
 import { Link } from 'react-router-dom';
-import { Bell, CheckSquare, Calendar, ChevronRight, Check, ListTodo, Plus, Trash2 } from 'lucide-react';
+import { Bell, CheckSquare, Calendar, ChevronRight, Check, ListTodo, Plus, Trash2, Film, Video, Timer, Flame, X, Sparkles } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import toast from 'react-hot-toast';
 import { confirmAction } from '../lib/confirmHelper';
 import EditorWorkloadWidget from '../components/EditorWorkloadWidget';
+import { IMAGE_EDITORS_LIST } from '../lib/constants';
+import { playSuccessChime } from '../lib/soundChime';
 
 export default function Dashboard() {
   const { userData, users } = useAuth();
@@ -25,6 +27,17 @@ export default function Dashboard() {
   const [pendingTrades, setPendingTrades] = useState<any[]>([]);
   const [newTask, setNewTask] = useState({ title: '', type: 'Reportagem', time: '', assignedTo: '' });
   
+  // Modal de Atribuir Pauta para Editor Livre
+  const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
+  const [assignEditorId, setAssignEditorId] = useState('zand');
+  const [assignTitle, setAssignTitle] = useState('');
+  const [assignDescription, setAssignDescription] = useState('');
+  const [assignJournal, setAssignJournal] = useState<'BG' | 'Cidade Alerta' | 'Geral'>('BG');
+  const [assignFormat, setAssignFormat] = useState<'VT' | 'Sonora' | 'Compacto' | 'Ao Vivo' | 'Bruto'>('VT');
+  const [assignDeadline, setAssignDeadline] = useState('');
+  const [assignIsUrgent, setAssignIsUrgent] = useState(false);
+  const [availableAgendas, setAvailableAgendas] = useState<any[]>([]);
+
   const today = format(new Date(), 'yyyy-MM-dd');
   const isManager = userData?.role === 'admin' || userData?.role === 'editor' || userData?.role === 'pauteiro' || userData?.role === 'pauteira';
   const displayNames = getDisplayNames(users);
@@ -98,8 +111,68 @@ export default function Dashboard() {
       setPendingTrades(relevantTrades);
     }, err => console.warn('Dashboard trades error:', err));
 
-    return () => { unsubR(); unsubH(); unsubTpl(); unsubRun(); unsubT(); unsubAllT(); unsubScale(); unsubTrades(); };
+    // Listen to agendas for selecting existing pautas
+    const qAgendas = query(collection(db, 'agendas'), orderBy('createdAt', 'desc'), limit(30));
+    const unsubAgendas = onSnapshot(qAgendas, snap => {
+      setAvailableAgendas(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, err => console.warn('Dashboard agendas error:', err));
+
+    return () => { unsubR(); unsubH(); unsubTpl(); unsubRun(); unsubT(); unsubAllT(); unsubScale(); unsubTrades(); unsubAgendas(); };
   }, [userData, today, isManager]);
+
+  const openAssignPautaModal = (editorId?: string) => {
+    if (editorId) {
+      setAssignEditorId(editorId);
+    }
+    setIsAssignModalOpen(true);
+  };
+
+  const handleSelectExistingAgenda = (agendaId: string) => {
+    if (!agendaId) return;
+    const agenda = availableAgendas.find(a => a.id === agendaId);
+    if (agenda) {
+      setAssignTitle(agenda.title || '');
+      setAssignDescription(agenda.details || agenda.description || '');
+      if (agenda.journal) setAssignJournal(agenda.journal);
+      if (agenda.time) setAssignDeadline(agenda.time);
+    }
+  };
+
+  const handleAssignPautaSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!assignTitle.trim()) {
+      return toast.error('Informe ao menos a retranca ou título da pauta.');
+    }
+    try {
+      await addDoc(collection(db, 'retrancas'), {
+        title: assignTitle.trim().toUpperCase(),
+        description: assignDescription.trim(),
+        editorId: assignEditorId || '',
+        status: 'pendente',
+        hasNewMedia: false,
+        isUrgent: assignIsUrgent,
+        deadline: assignDeadline.trim() || '',
+        journal: assignJournal,
+        format: assignFormat,
+        updates: [],
+        createdBy: userData?.uid || 'coordenador',
+        createdByName: userData?.name || 'Coordenação',
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      });
+
+      playSuccessChime();
+      const editorObj = IMAGE_EDITORS_LIST.find(e => e.uid === assignEditorId);
+      toast.success(`Pauta atribuída com sucesso para ${editorObj?.name || assignEditorId}!`);
+      setIsAssignModalOpen(false);
+      setAssignTitle('');
+      setAssignDescription('');
+      setAssignDeadline('');
+      setAssignIsUrgent(false);
+    } catch (err: any) {
+      toast.error('Erro ao salvar retranca: ' + err.message);
+    }
+  };
 
   const getUserName = (id: string) => {
     const u = users.find(u => u.uid === id);
@@ -173,13 +246,25 @@ export default function Dashboard() {
 
   return (
      <div className="space-y-[15px]">
-        <div className="bg-white rounded-[8px] p-6 shadow-[0_1px_3px_rgba(0,0,0,0.1)] border border-ric-border">
-          <h1 className="text-2xl font-bold text-ric-text">Olá, {userData?.name ? userData.name.split(' ')[0] : (userData?.email ? userData.email.split('@')[0] : 'Colaborador')}!</h1>
-          <p className="text-[14px] text-ric-muted mt-1">Bem-vindo(a) ao Início do Painel Geral. Aqui está o seu resumo do plantão.</p>
+        <div className="bg-white rounded-[8px] p-6 shadow-[0_1px_3px_rgba(0,0,0,0.1)] border border-ric-border flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold text-ric-text">Olá, {userData?.name ? userData.name.split(' ')[0] : (userData?.email ? userData.email.split('@')[0] : 'Colaborador')}!</h1>
+            <p className="text-[14px] text-ric-muted mt-1">Bem-vindo(a) ao Início do Painel Geral. Aqui está o seu resumo do plantão.</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => openAssignPautaModal()}
+            className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black uppercase shadow-md flex items-center gap-2 cursor-pointer transition-all active:scale-95 shrink-0"
+          >
+            <Plus size={16} strokeWidth={3} /> Atribuir Pauta p/ Editor Livre
+          </button>
         </div>
 
         {/* STATUS DA ILHA DE EDIÇÃO (OCUPAÇÃO, PORCENTAGEM & ALERTA LIVRE) */}
-        <EditorWorkloadWidget showLinkToDashboard={true} />
+        <EditorWorkloadWidget 
+          showLinkToDashboard={true} 
+          onAssignClick={(editorId) => openAssignPautaModal(editorId)}
+        />
 
         {/* SUAS TAREFAS DE HOJE */}
         <div className="bg-white rounded-[8px] shadow-[0_1px_3px_rgba(0,0,0,0.1)] border border-ric-border overflow-hidden">
@@ -372,6 +457,189 @@ export default function Dashboard() {
             </div>
         </div>
 
+        {/* MODAL DE ATRIBUIR PAUTA PARA EDITOR LIVRE */}
+        {isAssignModalOpen && (
+          <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
+            <div className="bg-white w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden animate-in slide-in-from-bottom-4">
+              <div className="bg-emerald-700 text-white p-5 flex justify-between items-center">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center font-bold">
+                    <Film size={20} />
+                  </div>
+                  <div>
+                    <h3 className="font-black uppercase text-sm tracking-tight">Atribuir Pauta p/ Editor Livre</h3>
+                    <p className="text-[10px] text-emerald-200 font-bold uppercase tracking-wider">
+                      Ilhas de Edição • Grupo RIC
+                    </p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setIsAssignModalOpen(false)} 
+                  className="p-1 hover:bg-white/10 rounded-full cursor-pointer text-white/80 hover:text-white"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              <form onSubmit={handleAssignPautaSubmit} className="p-6 space-y-4 max-h-[80vh] overflow-y-auto">
+                {/* Urgent toggle */}
+                <div className="p-3 bg-red-50 border border-red-200 rounded-xl flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Flame className="text-red-600 animate-pulse" size={18} />
+                    <div>
+                      <span className="text-xs font-black uppercase text-red-900 block">🚨 URGENTE / PRIORIDADE MÁXIMA</span>
+                      <span className="text-[10px] text-red-700">Notifica o editor com alerta prioritário</span>
+                    </div>
+                  </div>
+                  <input 
+                    type="checkbox"
+                    checked={assignIsUrgent}
+                    onChange={e => setAssignIsUrgent(e.target.checked)}
+                    className="w-5 h-5 accent-red-600 rounded cursor-pointer"
+                  />
+                </div>
+
+                {/* Editor Selection */}
+                <div>
+                  <label className="block text-[10px] font-black uppercase tracking-wider text-ric-muted mb-1">
+                    Editor de Imagem Destinatário <span className="text-red-500">*</span>
+                  </label>
+                  <select
+                    value={assignEditorId}
+                    onChange={e => setAssignEditorId(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-bold focus:bg-white focus:ring-2 focus:ring-emerald-600 outline-none cursor-pointer"
+                    required
+                  >
+                    {IMAGE_EDITORS_LIST.map(e => (
+                      <option key={e.uid} value={e.uid}>
+                        {e.name} (Editor de Imagem)
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Optional: Pick from existing agendas */}
+                {availableAgendas.length > 0 && (
+                  <div>
+                    <label className="block text-[10px] font-black uppercase tracking-wider text-ric-muted mb-1">
+                      Ou Selecione uma Pauta Existente Cadastrada:
+                    </label>
+                    <select
+                      onChange={e => handleSelectExistingAgenda(e.target.value)}
+                      defaultValue=""
+                      className="w-full bg-blue-50/60 border border-blue-200 rounded-xl p-2.5 text-xs font-bold text-slate-800 focus:bg-white focus:ring-2 focus:ring-ric-blue outline-none cursor-pointer"
+                    >
+                      <option value="">-- Digitar manualmente ou escolher pauta... --</option>
+                      {availableAgendas.map(ag => (
+                        <option key={ag.id} value={ag.id}>
+                          [{ag.journal || 'BG'}] {ag.title} {ag.reporter ? `(${ag.reporter})` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                {/* Title / Retranca */}
+                <div>
+                  <label className="block text-[10px] font-black uppercase tracking-wider text-ric-muted mb-1">
+                    Retranca / Assunto da Pauta <span className="text-red-500">*</span>
+                  </label>
+                  <input 
+                    type="text" 
+                    value={assignTitle}
+                    onChange={e => setAssignTitle(e.target.value.toUpperCase())}
+                    placeholder="EX: ACIDENTE BR 277 OU CASO VACINACAO"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-black uppercase tracking-wide focus:bg-white focus:ring-2 focus:ring-emerald-600 outline-none"
+                    required
+                  />
+                </div>
+
+                {/* Journal & Format */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[10px] font-black uppercase tracking-wider text-ric-muted mb-1">
+                      Jornal de Exibição
+                    </label>
+                    <select 
+                      value={assignJournal}
+                      onChange={e => setAssignJournal(e.target.value as any)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-bold focus:bg-white focus:ring-2 focus:ring-emerald-600 outline-none cursor-pointer"
+                    >
+                      <option value="BG">Balanço Geral (BG)</option>
+                      <option value="Cidade Alerta">Cidade Alerta (CA)</option>
+                      <option value="Geral">Geral / Ambos</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-black uppercase tracking-wider text-ric-muted mb-1">
+                      Formato do Material
+                    </label>
+                    <select 
+                      value={assignFormat}
+                      onChange={e => setAssignFormat(e.target.value as any)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-bold focus:bg-white focus:ring-2 focus:ring-emerald-600 outline-none cursor-pointer"
+                    >
+                      <option value="VT">VT Completo (com OFF)</option>
+                      <option value="Sonora">Sonora / Entrevista</option>
+                      <option value="Compacto">Compacto de Imagens</option>
+                      <option value="Ao Vivo">Cobertura Ao Vivo</option>
+                      <option value="Bruto">Bruto Decupado</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Deadline */}
+                <div>
+                  <label className="block text-[10px] font-black uppercase tracking-wider text-ric-muted mb-1">
+                    Horário Limite (Deadline)
+                  </label>
+                  <div className="relative">
+                    <Timer size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                    <input 
+                      type="text" 
+                      value={assignDeadline}
+                      onChange={e => setAssignDeadline(e.target.value)}
+                      placeholder="Ex: 11:45 ou 12:20"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-3 py-2.5 text-xs font-bold focus:bg-white focus:ring-2 focus:ring-emerald-600 outline-none"
+                    />
+                  </div>
+                </div>
+
+                {/* Description */}
+                <div>
+                  <label className="block text-[10px] font-black uppercase tracking-wider text-ric-muted mb-1">
+                    Orientações para o Editor
+                  </label>
+                  <textarea 
+                    rows={3}
+                    value={assignDescription}
+                    onChange={e => setAssignDescription(e.target.value)}
+                    placeholder="Ex: Pegar sonoras do delegado no cartão 2, destacar o momento da batida..."
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs focus:bg-white focus:ring-2 focus:ring-emerald-600 outline-none leading-relaxed"
+                  />
+                </div>
+
+                {/* Buttons */}
+                <div className="flex gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsAssignModalOpen(false)}
+                    className="flex-1 py-2.5 border border-slate-200 text-slate-600 rounded-xl text-xs font-black uppercase hover:bg-slate-50 cursor-pointer"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    className="flex-[2] bg-emerald-600 hover:bg-emerald-700 text-white py-2.5 rounded-xl text-xs font-black uppercase shadow-md transition-all active:scale-95 cursor-pointer flex items-center justify-center gap-1.5"
+                  >
+                    <Plus size={15} strokeWidth={3} /> Atribuir & Notificar Editor
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
 
      </div>
   );

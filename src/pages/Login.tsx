@@ -118,12 +118,13 @@ export default function Login() {
             </span>
             <span className="text-[10px] font-bold text-gray-400">Senha: 123456</span>
           </div>
-          <div className="grid grid-cols-4 gap-2">
+          <div className="grid grid-cols-5 gap-1.5">
             {[
               { id: 'zand', name: 'Zand' },
               { id: 'jamir', name: 'Jamir' },
               { id: 'jean', name: 'Jean' },
               { id: 'miudo', name: 'Miúdo' },
+              { id: 'valdeilton', name: 'Valdeilton' },
             ].map(ed => (
               <button
                 key={ed.id}
@@ -134,7 +135,7 @@ export default function Login() {
                 }}
                 disabled={loading}
                 title={`Entrar como ${ed.name} (Ilhas de Edição)`}
-                className="py-2.5 px-1 flex flex-col items-center justify-center bg-blue-50/70 hover:bg-ric-blue hover:text-white border border-blue-200/80 rounded-xl text-xs font-bold text-slate-800 transition-all cursor-pointer active:scale-95 shadow-2xs group"
+                className="py-2.5 px-0.5 flex flex-col items-center justify-center bg-blue-50/70 hover:bg-ric-blue hover:text-white border border-blue-200/80 rounded-xl text-[11px] font-bold text-slate-800 transition-all cursor-pointer active:scale-95 shadow-2xs group"
               >
                 <span className="truncate group-hover:text-white">{ed.name}</span>
               </button>

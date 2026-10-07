@@ -12,7 +12,8 @@ import {
   Video, 
   ArrowRight,
   Flame,
-  Check
+  Check,
+  Plus
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
@@ -35,12 +36,13 @@ interface EditorWorkloadWidgetProps {
   showLinkToDashboard?: boolean;
 }
 
-// Strictly the 4 official image editors of the newsroom: Zand, Jamir, Jean, Miúdo
+// Official image editors of the newsroom: Zand, Jamir, Jean, Miúdo, Valdeilton
 const OFFICIAL_IMAGE_EDITORS = [
   { uid: 'zand', username: 'zand', name: 'Zand', role: 'editor' },
   { uid: 'jamir', username: 'jamir', name: 'Jamir', role: 'editor' },
   { uid: 'jean', username: 'jean', name: 'Jean', role: 'editor' },
-  { uid: 'miudo', username: 'miudo', name: 'Miúdo', role: 'editor' }
+  { uid: 'miudo', username: 'miudo', name: 'Miúdo', role: 'editor' },
+  { uid: 'valdeilton', username: 'valdeilton', name: 'Valdeilton', role: 'editor' }
 ];
 
 const normalizeStr = (str: string) => 
@@ -200,14 +202,17 @@ export default function EditorWorkloadWidget({
               </p>
             </div>
           </div>
-          <div className="flex flex-wrap gap-1.5">
+          <div className="flex flex-wrap items-center gap-2">
             {freeEditors.map(e => (
-              <span 
+              <button
                 key={e.id}
-                className="px-2.5 py-1 bg-emerald-600 text-white rounded-lg text-[11px] font-black uppercase shadow-xs flex items-center gap-1"
+                type="button"
+                onClick={() => onAssignClick ? onAssignClick(e.id) : undefined}
+                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black uppercase shadow-xs flex items-center gap-1.5 transition-all cursor-pointer active:scale-95"
+                title={`Atribuir pauta/retranca para ${e.name}`}
               >
-                <Check size={12} strokeWidth={3} /> {e.name}: LIVRE
-              </span>
+                <Plus size={13} strokeWidth={3} /> Atribuir a {e.name}
+              </button>
             ))}
           </div>
         </div>
@@ -218,8 +223,8 @@ export default function EditorWorkloadWidget({
         </div>
       )}
 
-      {/* Editors Grid Cards (Zand, Jamir, Jean, Miúdo) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 pt-1">
+      {/* Editors Grid Cards (Zand, Jamir, Jean, Miúdo, Valdeilton) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 pt-1">
         {editorStats.map(editor => {
           const isFree = editor.isFree;
           const currentRetranca = editor.activeRetrancas[0];
@@ -278,13 +283,24 @@ export default function EditorWorkloadWidget({
 
                 {/* Content Details: What they are editing or Free Alert */}
                 {isFree ? (
-                  <div className="bg-emerald-100/70 border border-emerald-200 rounded-lg p-2 text-center text-emerald-900 text-[11px] font-bold">
-                    <div className="font-black text-emerald-800 text-[11px] uppercase">
-                      ⚡ 100% Livre
+                  <div className="bg-emerald-100/70 border border-emerald-200 rounded-lg p-2.5 text-center text-emerald-900 text-[11px] font-bold space-y-2">
+                    <div>
+                      <div className="font-black text-emerald-800 text-[11px] uppercase flex items-center justify-center gap-1">
+                        <Sparkles size={12} /> 100% Livre
+                      </div>
+                      <div className="text-[10px] text-emerald-700 mt-0.5">
+                        Pronto para nova retranca
+                      </div>
                     </div>
-                    <div className="text-[10px] text-emerald-700 mt-0.5">
-                      Pronto para nova retranca
-                    </div>
+                    {onAssignClick && (
+                      <button
+                        type="button"
+                        onClick={() => onAssignClick(editor.id)}
+                        className="w-full py-1.5 px-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-black uppercase shadow-xs flex items-center justify-center gap-1 transition-all cursor-pointer active:scale-95"
+                      >
+                        <Plus size={12} strokeWidth={3} /> Atribuir Pauta
+                      </button>
+                    )}
                   </div>
                 ) : (
                   <div className="bg-blue-50/70 border border-blue-200/80 rounded-lg p-2 space-y-1">

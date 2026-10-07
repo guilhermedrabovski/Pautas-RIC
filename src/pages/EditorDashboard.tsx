@@ -134,7 +134,7 @@ export default function EditorDashboard() {
   const prevRetrancasRef = useRef<Map<string, Retranca>>(new Map());
 
   const cleanUserUid = (userData?.uid || '').toLowerCase().trim();
-  const isImageEditorUser = ['zand', 'jamir', 'jean', 'miudo'].includes(cleanUserUid) || userData?.role === 'editor';
+  const isImageEditorUser = ['zand', 'jamir', 'jean', 'miudo', 'valdeilton'].includes(cleanUserUid) || userData?.role === 'editor';
 
   const isPauteiro = !isImageEditorUser && (
     ['admin', 'pauteiro', 'pauteira'].includes(userData?.role || '') ||
@@ -142,13 +142,14 @@ export default function EditorDashboard() {
     (userData?.name || '').toLowerCase().includes('guilherme')
   );
 
-  // Load Image Editors (estritamente Zand, Jamir, Jean, Miúdo)
+  // Load Image Editors (Zand, Jamir, Jean, Miúdo, Valdeilton)
   useEffect(() => {
     const predefinedEditors: User[] = [
       { uid: 'zand', name: 'Zand', email: 'zand@ric.com.br', role: 'editor' },
       { uid: 'jamir', name: 'Jamir', email: 'jamir@ric.com.br', role: 'editor' },
       { uid: 'jean', name: 'Jean', email: 'jean@ric.com.br', role: 'editor' },
       { uid: 'miudo', name: 'Miúdo', email: 'miudo@ric.com.br', role: 'editor' },
+      { uid: 'valdeilton', name: 'Valdeilton', email: 'valdeilton@ric.com.br', role: 'editor' },
     ];
 
     const q = query(collection(db, 'users'));
@@ -157,7 +158,7 @@ export default function EditorDashboard() {
       const firestoreEditors = allUsers.filter(u => {
         const cleanId = (u.uid || '').toLowerCase().trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
         const cleanName = (u.name || '').toLowerCase().trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-        return ['zand', 'jamir', 'jean', 'miudo'].some(target => cleanId === target || cleanName === target || cleanName.includes(target));
+        return ['zand', 'jamir', 'jean', 'miudo', 'valdeilton'].some(target => cleanId === target || cleanName === target || cleanName.includes(target));
       });
       
       const merged = [...predefinedEditors];
@@ -419,6 +420,7 @@ export default function EditorDashboard() {
     if (cleanId === 'jamir') return 'Jamir';
     if (cleanId === 'jean') return 'Jean';
     if (cleanId === 'miudo') return 'Miúdo';
+    if (cleanId === 'valdeilton') return 'Valdeilton';
     const found = editors.find(e => {
       const eUid = (e.uid || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
       const eName = (e.name || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
@@ -446,8 +448,8 @@ export default function EditorDashboard() {
     if (myUid && (myUid.includes(target) || target.includes(myUid))) return true;
     if (myUsername && (myUsername.includes(target) || target.includes(myUsername))) return true;
 
-    // Check the 4 image editors explicitly (Zand, Jamir, Jean, Miúdo)
-    const imageEditors = ['zand', 'jamir', 'jean', 'miudo'];
+    // Check image editors explicitly (Zand, Jamir, Jean, Miúdo, Valdeilton)
+    const imageEditors = ['zand', 'jamir', 'jean', 'miudo', 'valdeilton'];
     for (const ed of imageEditors) {
       if (target.includes(ed) && (myName.includes(ed) || myUid.includes(ed) || myEmail.includes(ed) || myUsername.includes(ed))) {
         return true;
