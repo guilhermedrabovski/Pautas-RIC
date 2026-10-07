@@ -5,6 +5,7 @@ import { Bell, Calendar, CheckSquare, ClipboardList, LayoutDashboard, LogOut, Us
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import NotificationHandler from './NotificationHandler';
+import EditorialChat from './EditorialChat';
 
 export default function Layout() {
   const { userData, logout } = useAuth();
@@ -14,6 +15,7 @@ export default function Layout() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   const isReporter = userData?.role === 'reporter';
+  const isEditor = userData?.role === 'editor';
   
   const isManager = () => {
     if (!userData) return false;
@@ -59,21 +61,22 @@ export default function Layout() {
     return () => { unsubReminders(); unsubTrades(); };
   }, [userData?.uid, userData?.role, userData?.name]);
 
-  const canSeeReports = ['admin', 'editor', 'pauteiro', 'pauteira'].includes(userData?.role || '');
-
-  const menu = [
-    { name: 'Início', icon: LayoutDashboard, path: '/dashboard' },
-    { name: 'Pautas', icon: ClipboardList, path: '/agendas' },
-    { name: 'Filtro WhatsApp', icon: MessageSquare, path: '/whatsapp' },
-    { name: 'Reunião de Pauta', icon: MonitorPlay, path: '/lineup', hide: !isManager() },
-    { name: 'Meu Painel', icon: ClipboardList, path: '/my-dashboard', hide: !isReporter },
-    { name: 'Escalas', icon: Users, path: '/scales', badge: pendingScalesCount },
-    { name: 'Lembretes', icon: Bell, path: '/reminders', badge: unreadRemindersCount },
-    { name: 'Histórias (Repercussão)', icon: BookOpen, path: '/stories' },
-    { name: 'Relatório (Plantão)', icon: Calendar, path: '/handovers', hide: !canSeeReports },
-    { name: 'Checklist', icon: CheckSquare, path: '/checklist' },
-    { name: 'Configurações', icon: SettingsIcon, path: '/settings' }
-  ].filter(item => !item.hide);
+  // Menu items: Editores vão direto para Ilhas de Edição
+  const menu = isEditor
+    ? [
+        { name: 'Ilhas de Edição', icon: LayoutDashboard, path: '/editor-dashboard' }
+      ]
+    : [
+        { name: 'Início', icon: LayoutDashboard, path: '/dashboard' },
+        { name: 'Pautas', icon: ClipboardList, path: '/agendas' },
+        { name: 'WhatsApp Sugestões', icon: MessageSquare, path: '/whatsapp' },
+        { name: 'Ilhas de Edição', icon: LayoutDashboard, path: '/editor-dashboard' },
+        { name: 'Meu Painel', icon: ClipboardList, path: '/my-dashboard', hide: !isReporter },
+        { name: 'Lembretes', icon: Bell, path: '/reminders', badge: unreadRemindersCount },
+        { name: 'Histórias (Repercussão)', icon: BookOpen, path: '/stories' },
+        { name: 'Checklist', icon: CheckSquare, path: '/checklist' },
+        { name: 'Configurações', icon: SettingsIcon, path: '/settings' }
+      ].filter(item => !item.hide);
 
   return (
     <div className="min-h-screen bg-ric-bg flex overflow-hidden">
@@ -184,6 +187,9 @@ export default function Layout() {
           <Outlet />
         </div>
       </main>
+
+      {/* Online Chat between editors, pauteiros and newsroom */}
+      <EditorialChat />
     </div>
   );
 }

@@ -14,22 +14,32 @@ import Settings from './pages/Settings';
 import Lineup from './pages/Lineup';
 import Stories from './pages/Stories';
 import WhatsAppMessages from './pages/WhatsAppMessages';
+import EditorDashboard from './pages/EditorDashboard';
 
 export default function App() {
-  const { user, loading } = useAuth();
+  const { user, userData, loading } = useAuth();
 
-  if (loading) return <div className="min-h-screen flex items-center justify-center">Carregando...</div>;
+  if (loading) return <div className="min-h-screen flex items-center justify-center font-bold text-ric-blue">Carregando...</div>;
+
+  const isEditor = userData?.role === 'editor';
 
   return (
     <Routes>
       {!user ? (
         <Route path="*" element={<Login />} />
+      ) : isEditor ? (
+        // Editores têm acesso direto às Ilhas de Edição
+        <Route element={<Layout />}>
+          <Route path="/editor-dashboard" element={<EditorDashboard />} />
+          <Route path="*" element={<Navigate to="/editor-dashboard" replace />} />
+        </Route>
       ) : (
         <Route element={<Layout />}>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/agendas" element={<Agendas />} />
           <Route path="/whatsapp" element={<WhatsAppMessages />} />
+          <Route path="/editor-dashboard" element={<EditorDashboard />} />
           <Route path="/my-dashboard" element={<MyDashboard />} />
           <Route path="/reminders" element={<Reminders />} />
           <Route path="/scales" element={<Scales />} />

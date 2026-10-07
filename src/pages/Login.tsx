@@ -4,6 +4,7 @@ import { doc, setDoc } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
 import { PREDEFINED_USERS } from '../lib/constants';
 import toast from 'react-hot-toast';
+import { Film } from 'lucide-react';
 
 export default function Login() {
   const [username, setUsername] = useState('');
@@ -108,6 +109,38 @@ export default function Login() {
             {loading ? 'Entrando...' : 'Entrar'}
           </button>
         </form>
+
+        {/* Quick Access for Image Editors */}
+        <div className="mt-6 pt-4 border-t border-gray-100">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[11px] font-black uppercase text-ric-blue tracking-wider flex items-center gap-1.5">
+              <Film size={14} className="text-ric-blue" /> Ilhas de Edição (Editores)
+            </span>
+            <span className="text-[10px] font-bold text-gray-400">Senha: 123456</span>
+          </div>
+          <div className="grid grid-cols-4 gap-2">
+            {[
+              { id: 'zand', name: 'Zand' },
+              { id: 'jamir', name: 'Jamir' },
+              { id: 'jean', name: 'Jean' },
+              { id: 'miudo', name: 'Miúdo' },
+            ].map(ed => (
+              <button
+                key={ed.id}
+                type="button"
+                onClick={() => {
+                  setUsername(ed.id);
+                  setPassword('123456');
+                }}
+                disabled={loading}
+                title={`Entrar como ${ed.name} (Ilhas de Edição)`}
+                className="py-2.5 px-1 flex flex-col items-center justify-center bg-blue-50/70 hover:bg-ric-blue hover:text-white border border-blue-200/80 rounded-xl text-xs font-bold text-slate-800 transition-all cursor-pointer active:scale-95 shadow-2xs group"
+              >
+                <span className="truncate group-hover:text-white">{ed.name}</span>
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
     </div>
   );
