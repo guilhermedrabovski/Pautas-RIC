@@ -1,4 +1,5 @@
-// Synthesized Web Audio API Chimes (zero external assets, 100% reliable across browsers)
+// Synthesized Web Audio API Chimes & Native Speech Synthesis for Newsroom Announcements
+import { IMAGE_EDITORS_LIST } from './constants';
 
 export function playMessageChime() {
   try {
@@ -56,4 +57,75 @@ export function playSuccessChime() {
       osc.stop(startTime + 0.35);
     });
   } catch (e) {}
+}
+
+/**
+ * Normalizes and looks up the friendly spoken name of an editor
+ */
+export function getEditorSpokenName(editorIdOrName: string): string {
+  if (!editorIdOrName) return 'Editor';
+  const clean = editorIdOrName.toLowerCase().trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+  if (clean.includes('zand')) return 'Zand';
+  if (clean.includes('jamir')) return 'Jamir';
+  if (clean.includes('jean')) return 'Jean';
+  if (clean.includes('miudo') || clean.includes('miú')) return 'Miúdo';
+  if (clean.includes('valdeilton') || clean.includes('valde')) return 'Valdeilton';
+
+  const match = IMAGE_EDITORS_LIST.find(e => 
+    e.uid.toLowerCase() === clean || 
+    e.username.toLowerCase() === clean || 
+    e.name.toLowerCase().includes(clean)
+  );
+  if (match) return match.name;
+
+  return editorIdOrName;
+}
+
+/**
+ * Speaks an alert announcing that a retranca was assigned to an editor.
+ * Plays a discrete news chime before speaking.
+ */
+export function speakEditorAssignment(editorNameOrId: string, retrancaTitle?: string) {
+  try {
+    // 1. Play alerting chime first
+    playMessageChime();
+
+    // 2. Browser Web Speech API check
+    if (!('speechSynthesis' in window)) return;
+
+    const spokenName = getEditorSpokenName(editorNameOrId);
+    
+    // Cancellation prevents multiple overlapping utterances if multiple tasks arrive
+    window.speechSynthesis.cancel();
+
+    // Formulate a natural, professional television newsroom announcement in Portuguese
+    const textToSpeak = retrancaTitle 
+      ? `Atenção, ${spokenName}. Nova matéria atribuída: ${retrancaTitle}.`
+      : `Atenção, ${spokenName}. Nova matéria atribuída na ilha de edição.`;
+
+    const utterance = new SpeechSynthesisUtterance(textToSpeak);
+    utterance.lang = 'pt-BR';
+    utterance.rate = 1.05; // Slightly brisk newsroom tempo
+    utterance.pitch = 1.0;
+    utterance.volume = 1.0;
+
+    // Pick a Portuguese voice if available
+    const voices = window.speechSynthesis.getVoices();
+    const ptVoice = voices.find(v => v.lang.includes('pt-BR') || v.lang.includes('pt_BR') || v.lang.startsWith('pt'));
+    if (ptVoice) {
+      utterance.voice = ptVoice;
+    }
+
+    // Delay slightly to let the chime ring
+    setTimeout(() => {
+      try {
+        window.speechSynthesis.speak(utterance);
+      } catch (err) {
+        console.warn('Speech synthesis error:', err);
+      }
+    }, 280);
+  } catch (err) {
+    console.warn('Speech announcement error:', err);
+  }
 }

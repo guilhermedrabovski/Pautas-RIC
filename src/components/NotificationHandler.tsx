@@ -4,7 +4,7 @@ import { doc, updateDoc, arrayUnion, collection, query, onSnapshot } from 'fireb
 import { messaging, db } from '../lib/firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { toast } from 'react-hot-toast';
-import { playSuccessChime } from '../lib/soundChime';
+import { playSuccessChime, speakEditorAssignment } from '../lib/soundChime';
 
 export const requestNotificationPermission = async (userData: any) => {
   if (!userData || !messaging) {
@@ -26,7 +26,6 @@ export const requestNotificationPermission = async (userData: any) => {
   }
   
   try {
-    // Need to call this synchronously without await to ensure Safari doesn't block it as non-user interaction
     Notification.requestPermission().then(async (permission) => {
       if (permission === 'granted') {
         const rawVapidKey = (import.meta as any).env.VITE_VAPID_KEY;
@@ -67,14 +66,12 @@ export const requestNotificationPermission = async (userData: any) => {
           const isExpectedPatternError = e.message?.includes('The string did not match the expected pattern') || e.name === 'SyntaxError';
           
           if (isExpectedPatternError) {
-            userFriendlyMessage = 'A Chave VAPID de teste não pertence ao seu projeto do Firebase. Obtenha a "Web Push Certificate" correta nas configurações do seu site Firebase Console (Configurações -> Cloud Messaging -> Web Push certificates) e salve a variável de ambiente VITE_VAPID_KEY nos Segredos do seu app.';
+            userFriendlyMessage = 'A Chave VAPID de teste não pertence ao seu projeto do Firebase. Obtenha a "Web Push Certificate" correta nas configurações do seu site Firebase Console e salve a variável VITE_VAPID_KEY.';
           }
           toast.error(userFriendlyMessage, { duration: 15000 });
         }
       } else if (permission === 'denied') {
-        toast.error('Você negou a permissão de notificação neste navegador. Caso queira ativar, altere as permissões do site nas configurações do navegador.', { duration: 6000 });
-      } else {
-        toast.error('Permissão de notificação não foi concedida (' + permission + ').');
+        toast.error('Você negou a permissão de notificação neste navegador.');
       }
     }).catch(err => {
       console.error(err);
@@ -82,39 +79,63 @@ export const requestNotificationPermission = async (userData: any) => {
     });
   } catch (error: any) {
     console.error('Error getting notification token:', error);
-    toast.error(`Erro técnico ao ativar notificações: ${error.message}. Tente recarregar a página e garantir que a internet está estável.`, { duration: 6000 });
   }
 };
 
 export default function NotificationHandler() {
   const { userData } = useAuth();
-  const prevStatusesRef = useRef<Map<string, string>>(new Map());
+  const prevRetrancasRef = useRef<Map<string, { status: string; editorId: string }>>(new Map());
   const initialSyncRef = useRef(true);
 
-  // Monitor retrancas in real time to alert the creator when completed
+  // Monitor retrancas in real time across the entire app
   useEffect(() => {
     if (!userData?.uid) return;
+
+    const myUid = (userData.uid || '').toLowerCase().trim();
+    const myName = (userData.name || '').toLowerCase().trim();
+
+    const isMatchMe = (targetId: string) => {
+      if (!targetId) return false;
+      const clean = targetId.toLowerCase().trim();
+      return clean === myUid || clean === myName || (myUid && clean.includes(myUid)) || (myName && clean.includes(myName));
+    };
 
     const q = query(collection(db, 'retrancas'));
     const unsubRetrancas = onSnapshot(q, snap => {
       snap.docs.forEach(d => {
         const data = d.data();
-        const prevStatus = prevStatusesRef.current.get(d.id);
+        const prev = prevRetrancasRef.current.get(d.id);
 
-        if (!initialSyncRef.current && prevStatus && prevStatus !== 'concluido' && data.status === 'concluido') {
-          const isCreator = data.createdBy === userData.uid || 
-            (userData.name && data.createdByName?.toLowerCase() === userData.name.toLowerCase()) ||
-            (userData.email && userData.email.toLowerCase().includes('guilherme'));
+        if (!initialSyncRef.current) {
+          // 1. Voice Announcement when a retranca is assigned to the current user (Editor)
+          const isNowAssignedToMe = isMatchMe(data.editorId);
+          const wasAssignedToMe = prev && isMatchMe(prev.editorId);
 
-          if (isCreator && data.editorId !== userData.uid) {
-            playSuccessChime();
-            toast.success(
-              `🎬 VT Concluído! O editor finalizou a matéria: "${data.title}"`,
-              { duration: 10000, position: 'top-right' }
-            );
+          if (isNowAssignedToMe && (!wasAssignedToMe || (prev && prev.editorId !== data.editorId))) {
+            // Trigger spoken voice announcement with editor name!
+            speakEditorAssignment(data.editorId || userData.name || 'Editor', data.title);
+          }
+
+          // 2. Alert creator when VT is completed
+          if (prev && prev.status !== 'concluido' && data.status === 'concluido') {
+            const isCreator = data.createdBy === userData.uid || 
+              (userData.name && data.createdByName?.toLowerCase() === userData.name.toLowerCase()) ||
+              (userData.email && userData.email.toLowerCase().includes('guilherme'));
+
+            if (isCreator && data.editorId !== userData.uid) {
+              playSuccessChime();
+              toast.success(
+                `🎬 VT Concluído! O editor finalizou a matéria: "${data.title}"`,
+                { duration: 10000, position: 'top-right' }
+              );
+            }
           }
         }
-        prevStatusesRef.current.set(d.id, data.status);
+
+        prevRetrancasRef.current.set(d.id, {
+          status: data.status,
+          editorId: data.editorId || ''
+        });
       });
       initialSyncRef.current = false;
     }, err => {
@@ -126,8 +147,6 @@ export default function NotificationHandler() {
 
   useEffect(() => {
     if (!userData || !messaging) return;
-
-    // Remove automatic permission request: requestPermission();
 
     // Foreground message handler
     const unsubOnMessage = onMessage(messaging, (payload) => {

@@ -22,14 +22,15 @@ import {
   Video, 
   Film, 
   ChevronDown, 
-  ChevronUp
+  ChevronUp,
+  Volume2
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { confirmAction } from '../lib/confirmHelper';
 import { format } from 'date-fns';
 import { PREDEFINED_USERS, IMAGE_EDITORS_LIST } from '../lib/constants';
 import EditorWorkloadWidget from '../components/EditorWorkloadWidget';
-import { playSuccessChime } from '../lib/soundChime';
+import { playSuccessChime, speakEditorAssignment } from '../lib/soundChime';
 
 export interface User {
   uid: string;
@@ -192,7 +193,7 @@ export default function EditorDashboard() {
 
           // Condition 1: Brand new retranca assigned to me
           if (!prev && isAssignedToMe) {
-            playNotificationSound();
+            speakEditorAssignment(r.editorId, r.title);
             setRealtimeAlert({
               retranca: r,
               message: `Nova retranca atribuída a você: "${r.title}"`,
@@ -207,7 +208,7 @@ export default function EditorDashboard() {
           }
           // Condition 3: Existing retranca was assigned to me
           else if (prev && prev.editorId !== userData.uid && isAssignedToMe) {
-            playNotificationSound();
+            speakEditorAssignment(r.editorId, r.title);
             setRealtimeAlert({
               retranca: r,
               message: `Você foi marcado na retranca: "${r.title}"`,
@@ -265,6 +266,9 @@ export default function EditorDashboard() {
         updatedAt: Date.now()
       });
 
+      if (editorId) {
+        speakEditorAssignment(editorId, title.trim().toUpperCase());
+      }
       toast.success(editorId ? 'Retranca criada e editor notificado!' : 'Retranca enviada para a fila de edição!');
       resetForm();
     } catch (error: any) {
@@ -498,6 +502,20 @@ export default function EditorDashboard() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
+          <button
+            type="button"
+            onClick={() => {
+              const testEditor = userData?.name || 'Zand';
+              speakEditorAssignment(testEditor, 'ACIDENTE NA BR');
+              toast.success(`🔊 Testando voz de anúncio: "${testEditor}"`, { icon: '🎙️' });
+            }}
+            className="py-2.5 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-black uppercase flex items-center gap-1.5 transition-all cursor-pointer active:scale-95"
+            title="Clique para testar o anúncio por voz com o nome do editor"
+          >
+            <Volume2 size={15} />
+            Testar Voz
+          </button>
+
           {isPauteiro && (
             <button
               onClick={() => setIsModalOpen(true)}
