@@ -10,8 +10,7 @@ import {
   orderBy, 
   limit 
 } from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { db, storage } from '../lib/firebase';
+import { db } from '../lib/firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { getDisplayNames } from '../lib/userUtils';
 import toast from 'react-hot-toast';
@@ -48,6 +47,14 @@ import {
 } from 'lucide-react';
 import { confirmAction } from '../lib/confirmHelper';
 
+export interface AttachmentItem {
+  name: string;
+  url: string;
+  type: string;
+  size?: number;
+  dataUrl?: string;
+}
+
 interface WhatsAppMessage {
   id: string;
   subject: string;
@@ -56,7 +63,7 @@ interface WhatsAppMessage {
   phone?: string;
   journal: 'BG' | 'Cidade Alerta';
   status: 'pendente' | 'resolvido' | 'pauta' | 'descartado';
-  attachments: { name: string; url: string; type: string }[];
+  attachments: AttachmentItem[];
   createdAt: number;
   createdBy: string;
 }
@@ -80,7 +87,8 @@ export default function WhatsAppMessages() {
   const [description, setDescription] = useState('');
   const [journal, setJournal] = useState<'BG' | 'Cidade Alerta'>('BG');
   const [isUploading, setIsUploading] = useState(false);
-  const [attachments, setAttachments] = useState<{ name: string; url: string; type: string }[]>([]);
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
+  const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
 
   // WhatsApp Turning into Pauta & Lembrete State
   const [conversionMsg, setConversionMsg] = useState<WhatsAppMessage | null>(null);
@@ -119,35 +127,101 @@ export default function WhatsAppMessages() {
     return displayNames[id] || users.find(u => u.uid === id)?.name || id || 'Não definido';
   };
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
+  const readFileAsBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = (err) => reject(err);
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const processFiles = async (fileList: FileList | File[]) => {
+    const files = Array.from(fileList);
     if (!files || files.length === 0) return;
 
-    const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25MB
+    const MAX_FILE_SIZE = 35 * 1024 * 1024; // 35MB
     setIsUploading(true);
     const newAttachments = [...attachments];
 
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
+    for (const file of files) {
       if (file.size > MAX_FILE_SIZE) {
-        toast.error(`Arquivo ${file.name} excede o limite de 25MB`);
+        toast.error(`Arquivo "${file.name}" excede o limite de 35MB`);
         continue;
       }
+
+      const fileTypeCategory = file.type.startsWith('image/')
+        ? 'image'
+        : file.type.startsWith('video/')
+        ? 'video'
+        : file.type.startsWith('audio/')
+        ? 'audio'
+        : 'doc';
+
       try {
-        const fileRef = ref(storage, `whatsapp_uploads/${Date.now()}_${file.name}`);
-        await uploadBytes(fileRef, file);
-        const url = await getDownloadURL(fileRef);
+        const base64Data = await readFileAsBase64(file);
+
+        // Upload to server endpoint
+        const res = await fetch('/api/upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: file.name,
+            type: file.type || 'application/octet-stream',
+            data: base64Data,
+          }),
+        });
+
+        if (!res.ok) {
+          const errRes = await res.json().catch(() => ({}));
+          throw new Error(errRes.error || `Erro HTTP ${res.status}`);
+        }
+
+        const data = await res.json();
+        const fileUrl = data.url || base64Data;
+        const isSmallImage = fileTypeCategory === 'image' && file.size <= 500 * 1024;
+
         newAttachments.push({
           name: file.name,
-          url,
-          type: file.type.startsWith('image/') ? 'image' : file.type.startsWith('video/') ? 'video' : 'doc'
+          url: fileUrl,
+          type: fileTypeCategory,
+          size: file.size,
+          ...(isSmallImage ? { dataUrl: base64Data } : {}),
         });
+
+        toast.success(`"${file.name}" adicionado com sucesso!`);
       } catch (err: any) {
-        toast.error(`Falha ao subir ${file.name}: ` + err.message);
+        console.warn('Falha no upload via servidor, testando fallback local:', err);
+        // Fallback for smaller files < 700KB: store inline dataUrl in Firestore
+        if (file.size < 700 * 1024) {
+          try {
+            const base64Data = await readFileAsBase64(file);
+            newAttachments.push({
+              name: file.name,
+              url: base64Data,
+              type: fileTypeCategory,
+              size: file.size,
+              dataUrl: base64Data,
+            });
+            toast.success(`"${file.name}" anexado localmente!`);
+            continue;
+          } catch (innerErr) {
+            // ignore
+          }
+        }
+        toast.error(`Falha ao subir ${file.name}: ` + (err.message || 'Erro ao processar arquivo'));
       }
     }
+
     setAttachments(newAttachments);
     setIsUploading(false);
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      await processFiles(e.target.files);
+      e.target.value = '';
+    }
   };
 
   const removeAttachment = (index: number) => {
@@ -737,36 +811,94 @@ export default function WhatsAppMessages() {
                 <label className="block text-[10px] font-black text-slate-600 mb-2 uppercase tracking-wider flex items-center justify-between">
                   <span>Anexos / Mídias Enviadas ({attachments.length})</span>
                   {isUploading && (
-                    <span className="text-emerald-700 font-bold animate-pulse text-[10px]">
-                      Subindo arquivo...
+                    <span className="text-emerald-700 font-bold animate-pulse text-[10px] flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span>
+                      Subindo arquivo para o servidor...
                     </span>
                   )}
                 </label>
 
-                <div className="flex flex-wrap gap-2 mb-2">
-                  {attachments.map((att, idx) => (
-                    <div
-                      key={idx}
-                      className="bg-slate-100 border border-slate-200 rounded-lg px-2.5 py-1.5 flex items-center gap-1.5 text-[11px] font-bold text-slate-700"
-                    >
-                      <Paperclip size={12} className="text-slate-400" />
-                      <span className="truncate max-w-[120px]">{att.name}</span>
-                      <button
-                        type="button"
-                        onClick={() => removeAttachment(idx)}
-                        className="text-slate-400 hover:text-red-600 p-0.5 cursor-pointer"
-                      >
-                        <X size={12} />
-                      </button>
+                {/* Dropzone area */}
+                <div
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setIsDraggingOver(true);
+                  }}
+                  onDragLeave={(e) => {
+                    e.preventDefault();
+                    setIsDraggingOver(false);
+                  }}
+                  onDrop={async (e) => {
+                    e.preventDefault();
+                    setIsDraggingOver(false);
+                    if (e.dataTransfer.files) {
+                      await processFiles(e.dataTransfer.files);
+                    }
+                  }}
+                  className={`border-2 border-dashed rounded-xl p-3 transition-all ${
+                    isDraggingOver
+                      ? 'border-emerald-500 bg-emerald-50/70 scale-[1.01]'
+                      : 'border-slate-200 hover:border-emerald-500/60 bg-slate-50/60'
+                  }`}
+                >
+                  {/* File previews */}
+                  {attachments.length > 0 && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-3">
+                      {attachments.map((att, idx) => (
+                        <div
+                          key={idx}
+                          className="bg-white border border-slate-200 rounded-lg p-2 flex items-center justify-between gap-2 text-xs shadow-2xs"
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            {att.type === 'image' ? (
+                              <div className="w-8 h-8 rounded bg-slate-100 border border-slate-200 overflow-hidden shrink-0 flex items-center justify-center">
+                                <img
+                                  src={att.dataUrl || att.url}
+                                  alt={att.name}
+                                  className="w-full h-full object-cover"
+                                />
+                              </div>
+                            ) : (
+                              <div className="w-8 h-8 rounded bg-slate-100 border border-slate-200 shrink-0 flex items-center justify-center text-slate-500">
+                                <Paperclip size={14} />
+                              </div>
+                            )}
+                            <div className="min-w-0">
+                              <p className="font-bold text-slate-800 text-[11px] truncate leading-tight">
+                                {att.name}
+                              </p>
+                              {att.size && (
+                                <span className="text-[10px] text-slate-400">
+                                  {(att.size / 1024 / 1024).toFixed(2)} MB
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => removeAttachment(idx)}
+                            className="text-slate-400 hover:text-red-600 p-1 rounded-md hover:bg-red-50 transition-colors cursor-pointer shrink-0"
+                            title="Remover anexo"
+                          >
+                            <X size={14} />
+                          </button>
+                        </div>
+                      ))}
                     </div>
-                  ))}
+                  )}
 
-                  <label className="border border-dashed border-slate-300 hover:border-emerald-600 rounded-xl px-3 py-2 flex items-center gap-1.5 text-slate-600 hover:text-emerald-700 cursor-pointer text-xs font-bold transition-all">
-                    <Plus size={14} />
-                    <span>Adicionar Fotos/Vídeos</span>
+                  <label className="flex flex-col items-center justify-center py-3 px-2 cursor-pointer group">
+                    <div className="flex items-center gap-2 text-slate-600 group-hover:text-emerald-700 font-bold text-xs">
+                      <Plus size={16} className="text-emerald-600 group-hover:scale-110 transition-transform" />
+                      <span>Arraste ou clique para selecionar fotos, vídeos ou documentos</span>
+                    </div>
+                    <span className="text-[10px] text-slate-400 mt-0.5">
+                      Suporta imagens, vídeos, áudios, PDFs e planilhas (até 35MB por arquivo)
+                    </span>
                     <input
                       type="file"
                       multiple
+                      accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.txt"
                       onChange={handleFileUpload}
                       className="hidden"
                       disabled={isUploading}
@@ -1080,24 +1212,71 @@ export default function WhatsAppMessages() {
               {selectedMessage.attachments && selectedMessage.attachments.length > 0 && (
                 <div>
                   <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider block mb-1.5">
-                    Anexos ({selectedMessage.attachments.length})
+                    Anexos e Mídias ({selectedMessage.attachments.length})
                   </span>
-                  <div className="space-y-1.5">
-                    {selectedMessage.attachments.map((att, idx) => (
-                      <a
-                        key={idx}
-                        href={att.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="flex items-center justify-between p-2.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 transition-all"
-                      >
-                        <span className="flex items-center gap-2 truncate">
-                          <Paperclip size={13} className="text-slate-400 shrink-0" />
-                          <span className="truncate">{att.name}</span>
-                        </span>
-                        <ExternalLink size={13} className="text-slate-400 shrink-0 ml-2" />
-                      </a>
-                    ))}
+                  <div className="space-y-2">
+                    {selectedMessage.attachments.map((att, idx) => {
+                      const isImage = att.type === 'image' || (att.name && /\.(jpg|jpeg|png|webp|gif|svg)$/i.test(att.name));
+                      const isVideo = att.type === 'video' || (att.name && /\.(mp4|webm|mov|m4v)$/i.test(att.name));
+                      const isAudio = att.type === 'audio' || (att.name && /\.(mp3|ogg|wav|m4a|aac)$/i.test(att.name));
+                      const previewUrl = att.dataUrl || att.url;
+
+                      return (
+                        <div
+                          key={idx}
+                          className="p-3 bg-slate-50 hover:bg-slate-100/90 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 transition-all flex flex-col gap-2"
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="flex items-center gap-2 truncate">
+                              <Paperclip size={13} className="text-emerald-600 shrink-0" />
+                              <span className="truncate">{att.name}</span>
+                              {att.size && (
+                                <span className="text-[10px] text-slate-400 font-normal">
+                                  ({(att.size / 1024 / 1024).toFixed(2)} MB)
+                                </span>
+                              )}
+                            </span>
+                            <a
+                              href={att.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              download={att.name}
+                              className="flex items-center gap-1 text-[11px] text-emerald-700 hover:text-emerald-800 font-bold hover:underline shrink-0 ml-2"
+                            >
+                              <span>Abrir / Baixar</span>
+                              <ExternalLink size={12} />
+                            </a>
+                          </div>
+
+                          {isImage && previewUrl && (
+                            <div className="mt-1 rounded-lg overflow-hidden border border-slate-200 max-h-56 bg-slate-900/5 flex items-center justify-center">
+                              <img
+                                src={previewUrl}
+                                alt={att.name}
+                                className="max-h-56 w-auto object-contain rounded"
+                                loading="lazy"
+                              />
+                            </div>
+                          )}
+
+                          {isVideo && att.url && (
+                            <video
+                              src={att.url}
+                              controls
+                              className="max-h-48 w-full rounded border border-slate-200 bg-black mt-1"
+                            />
+                          )}
+
+                          {isAudio && previewUrl && (
+                            <audio
+                              src={previewUrl}
+                              controls
+                              className="w-full mt-1"
+                            />
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               )}

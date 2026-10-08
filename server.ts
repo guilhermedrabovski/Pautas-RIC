@@ -70,20 +70,70 @@ async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT) || 3000;
 
-  // Safe JSON body parser with error handling
-  app.use((req, res, next) => {
-    express.json()(req, res, (err) => {
-      if (err) {
-        console.error("JSON parsing error on API request:", err);
-        return res.status(400).json({ error: "Formato de requisição JSON inválido." });
-      }
-      next();
-    });
-  });
+  // Ensure public/uploads directory exists
+  const uploadsDir = path.join(process.cwd(), 'public', 'uploads');
+  if (!fs.existsSync(uploadsDir)) {
+    fs.mkdirSync(uploadsDir, { recursive: true });
+  }
+
+  // Safe JSON & urlencoded body parser with 50mb limit for file uploads and base64 payloads
+  app.use(express.json({ limit: '50mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+  // Serve static files from public/uploads
+  app.use('/uploads', express.static(uploadsDir));
 
   // Health check
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok", time: new Date().toISOString() });
+  });
+
+  // File upload route for WhatsApp suggestions & attachments
+  app.post("/api/upload", (req, res) => {
+    try {
+      const { name, type, data } = req.body;
+      if (!name || !data) {
+        return res.status(400).json({ error: "Nome e dados do arquivo são obrigatórios." });
+      }
+
+      // Extract base64 content
+      let base64Data = data;
+      let mimeType = type || 'application/octet-stream';
+      if (typeof data === 'string' && data.includes(',')) {
+        const parts = data.split(',');
+        const mimeMatch = parts[0].match(/:(.*?);/);
+        if (mimeMatch) {
+          mimeType = mimeMatch[1];
+        }
+        base64Data = parts[1];
+      }
+
+      const buffer = Buffer.from(base64Data, 'base64');
+      if (buffer.length > 35 * 1024 * 1024) {
+        return res.status(400).json({ error: "Arquivo excede o limite máximo permitido de 35MB." });
+      }
+
+      const ext = path.extname(name) || '';
+      const baseRaw = path.basename(name, ext).replace(/[^a-zA-Z0-9_-]/g, '_').substring(0, 40) || 'arquivo';
+      const safeFilename = `${Date.now()}_${Math.random().toString(36).substring(2, 8)}_${baseRaw}${ext}`;
+      
+      const filePath = path.join(uploadsDir, safeFilename);
+      fs.writeFileSync(filePath, buffer);
+
+      const fileUrl = `/uploads/${safeFilename}`;
+      console.log(`[Upload] Arquivo gravado com sucesso: ${safeFilename} (${buffer.length} bytes)`);
+
+      res.json({
+        success: true,
+        name: name,
+        url: fileUrl,
+        type: mimeType,
+        size: buffer.length
+      });
+    } catch (uploadErr: any) {
+      console.error("Erro no upload de arquivo:", uploadErr);
+      res.status(500).json({ error: uploadErr?.message || "Falha ao processar arquivo no servidor." });
+    }
   });
 
   // API routes FIRST
