@@ -43,7 +43,9 @@ import {
   ArrowRight,
   Sparkles,
   RefreshCw,
-  Copy
+  Copy,
+  Pencil,
+  Lock
 } from 'lucide-react';
 import { confirmAction } from '../lib/confirmHelper';
 
@@ -89,6 +91,18 @@ export default function WhatsAppMessages() {
   const [isUploading, setIsUploading] = useState(false);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
   const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
+
+  // State for Editing WhatsApp Message (Only Creator)
+  const [editingMessage, setEditingMessage] = useState<WhatsAppMessage | null>(null);
+  const [editSubject, setEditSubject] = useState('');
+  const [editDescription, setEditDescription] = useState('');
+  const [editPhone, setEditPhone] = useState('');
+  const [editJournal, setEditJournal] = useState<'BG' | 'Cidade Alerta'>('BG');
+  const [editPauteiraId, setEditPauteiraId] = useState('');
+  const [editStatus, setEditStatus] = useState<WhatsAppMessage['status']>('pendente');
+  const [editAttachments, setEditAttachments] = useState<AttachmentItem[]>([]);
+  const [isEditUploading, setIsEditUploading] = useState(false);
+  const [isEditDraggingOver, setIsEditDraggingOver] = useState(false);
 
   // WhatsApp Turning into Pauta & Lembrete State
   const [conversionMsg, setConversionMsg] = useState<WhatsAppMessage | null>(null);
@@ -136,13 +150,48 @@ export default function WhatsAppMessages() {
     });
   };
 
-  const processFiles = async (fileList: FileList | File[]) => {
+  // Verification: ONLY the creator can edit this WhatsApp message
+  const isAuthorOf = (msg: WhatsAppMessage | null | undefined): boolean => {
+    if (!msg || !userData) return false;
+    const currentUid = userData.uid;
+    const currentEmail = (userData.email || '').toLowerCase().trim();
+    const currentName = (userData.name || '').toLowerCase().trim();
+
+    // 1. Direct UID match with createdBy
+    if (msg.createdBy && msg.createdBy === currentUid) return true;
+
+    // 2. Direct UID match with pauteiraId
+    if (msg.pauteiraId && msg.pauteiraId === currentUid) return true;
+
+    // 3. Match against creator in users collection
+    const creatorUser = users.find(u => u.uid === msg.createdBy || u.uid === msg.pauteiraId);
+    if (creatorUser) {
+      if (creatorUser.uid === currentUid) return true;
+      if (creatorUser.email && creatorUser.email.toLowerCase() === currentEmail) return true;
+      if (creatorUser.name && creatorUser.name.toLowerCase() === currentName) return true;
+    }
+
+    // 4. Match against email or username strings (legacy)
+    if (msg.createdBy) {
+      const cleanCreated = msg.createdBy.toLowerCase().trim();
+      if (cleanCreated === currentEmail || cleanCreated === currentName) return true;
+    }
+
+    return false;
+  };
+
+  const uploadFiles = async (
+    fileList: FileList | File[],
+    currentAttachments: AttachmentItem[],
+    setTargetAttachments: React.Dispatch<React.SetStateAction<AttachmentItem[]>>,
+    setTargetUploading: React.Dispatch<React.SetStateAction<boolean>>
+  ) => {
     const files = Array.from(fileList);
     if (!files || files.length === 0) return;
 
     const MAX_FILE_SIZE = 35 * 1024 * 1024; // 35MB
-    setIsUploading(true);
-    const newAttachments = [...attachments];
+    setTargetUploading(true);
+    const newAttachments = [...currentAttachments];
 
     for (const file of files) {
       if (file.size > MAX_FILE_SIZE) {
@@ -213,8 +262,16 @@ export default function WhatsAppMessages() {
       }
     }
 
-    setAttachments(newAttachments);
-    setIsUploading(false);
+    setTargetAttachments(newAttachments);
+    setTargetUploading(false);
+  };
+
+  const processFiles = async (fileList: FileList | File[]) => {
+    await uploadFiles(fileList, attachments, setAttachments, setIsUploading);
+  };
+
+  const processEditFiles = async (fileList: FileList | File[]) => {
+    await uploadFiles(fileList, editAttachments, setEditAttachments, setIsEditUploading);
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -235,6 +292,84 @@ export default function WhatsAppMessages() {
     setJournal('BG');
     setAttachments([]);
     setIsFormOpen(false);
+  };
+
+  const openEditModal = (msg: WhatsAppMessage) => {
+    if (!isAuthorOf(msg)) {
+      const authorName = getUserName(msg.createdBy || msg.pauteiraId);
+      toast.error(`Apenas o criador desta mensagem (${authorName}) pode editá-la!`, {
+        icon: '🔒'
+      });
+      return;
+    }
+    setEditingMessage(msg);
+    setEditSubject(msg.subject || '');
+    setEditDescription(msg.description || '');
+    setEditPhone(msg.phone || '');
+    setEditJournal(msg.journal || 'BG');
+    setEditPauteiraId(msg.pauteiraId || userData?.uid || '');
+    setEditStatus(msg.status || 'pendente');
+    setEditAttachments(msg.attachments ? [...msg.attachments] : []);
+  };
+
+  const closeEditModal = () => {
+    setEditingMessage(null);
+    setEditSubject('');
+    setEditDescription('');
+    setEditPhone('');
+    setEditJournal('BG');
+    setEditPauteiraId('');
+    setEditAttachments([]);
+  };
+
+  const handleEditSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingMessage) return;
+
+    if (!isAuthorOf(editingMessage)) {
+      toast.error('Apenas o usuário que criou esta mensagem tem permissão para editá-la!', {
+        icon: '🔒'
+      });
+      return;
+    }
+
+    if (!editSubject.trim()) {
+      return toast.error('Informe o assunto da mensagem');
+    }
+
+    try {
+      const cleanPhone = editPhone.trim().replace(/\D/g, '');
+      await updateDoc(doc(db, 'whatsapp_messages', editingMessage.id), {
+        subject: editSubject.trim(),
+        description: editDescription.trim(),
+        phone: cleanPhone,
+        journal: editJournal,
+        pauteiraId: editPauteiraId || editingMessage.pauteiraId || userData?.uid || '',
+        status: editStatus,
+        attachments: editAttachments,
+        updatedAt: Date.now(),
+        updatedBy: userData?.uid || ''
+      });
+
+      toast.success('Mensagem de WhatsApp atualizada com sucesso!');
+
+      if (selectedMessage?.id === editingMessage.id) {
+        setSelectedMessage(prev => prev ? {
+          ...prev,
+          subject: editSubject.trim(),
+          description: editDescription.trim(),
+          phone: cleanPhone,
+          journal: editJournal,
+          pauteiraId: editPauteiraId || editingMessage.pauteiraId || userData?.uid || '',
+          status: editStatus,
+          attachments: editAttachments
+        } : null);
+      }
+
+      closeEditModal();
+    } catch (err: any) {
+      toast.error('Erro ao salvar alterações: ' + (err.message || 'Falha ao atualizar'));
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -626,9 +761,11 @@ export default function WhatsAppMessages() {
             onConvert={openConversionModal}
             onUpdateStatus={updateStatus}
             onDelete={handleDelete}
+            onEdit={openEditModal}
             onSelect={setSelectedMessage}
             onCopyPhone={copyPhone}
             getUserName={getUserName}
+            isAuthorOf={isAuthorOf}
           />
 
           {/* Column 2: Virou Pauta */}
@@ -642,9 +779,11 @@ export default function WhatsAppMessages() {
             onConvert={openConversionModal}
             onUpdateStatus={updateStatus}
             onDelete={handleDelete}
+            onEdit={openEditModal}
             onSelect={setSelectedMessage}
             onCopyPhone={copyPhone}
             getUserName={getUserName}
+            isAuthorOf={isAuthorOf}
           />
 
           {/* Column 3: Resolvidos */}
@@ -658,9 +797,11 @@ export default function WhatsAppMessages() {
             onConvert={openConversionModal}
             onUpdateStatus={updateStatus}
             onDelete={handleDelete}
+            onEdit={openEditModal}
             onSelect={setSelectedMessage}
             onCopyPhone={copyPhone}
             getUserName={getUserName}
+            isAuthorOf={isAuthorOf}
           />
 
           {/* Column 4: Descartados */}
@@ -674,9 +815,11 @@ export default function WhatsAppMessages() {
             onConvert={openConversionModal}
             onUpdateStatus={updateStatus}
             onDelete={handleDelete}
+            onEdit={openEditModal}
             onSelect={setSelectedMessage}
             onCopyPhone={copyPhone}
             getUserName={getUserName}
+            isAuthorOf={isAuthorOf}
           />
         </div>
       ) : (
@@ -697,9 +840,11 @@ export default function WhatsAppMessages() {
                 onConvert={openConversionModal}
                 onUpdateStatus={updateStatus}
                 onDelete={handleDelete}
+                onEdit={openEditModal}
                 onSelect={setSelectedMessage}
                 onCopyPhone={copyPhone}
                 getUserName={getUserName}
+                isAuthorOf={isAuthorOf}
               />
             ))
           )}
@@ -923,6 +1068,252 @@ export default function WhatsAppMessages() {
                 >
                   <Check size={14} strokeWidth={3} />
                   Salvar na Triagem
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Editar Mensagem de WhatsApp (Apenas Criador) */}
+      {editingMessage && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="bg-amber-600 text-white p-4.5 flex justify-between items-center">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center text-white">
+                  <Pencil size={18} />
+                </div>
+                <div>
+                  <h3 className="font-black uppercase text-sm tracking-tight">Editar Mensagem de WhatsApp</h3>
+                  <p className="text-[10px] text-white/90 font-bold uppercase tracking-wider">
+                    Autor: {getUserName(editingMessage.createdBy || editingMessage.pauteiraId)} (Você)
+                  </p>
+                </div>
+              </div>
+              <button 
+                type="button" 
+                onClick={closeEditModal} 
+                className="p-1.5 hover:bg-white/20 rounded-lg transition-all cursor-pointer"
+                title="Fechar"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={handleEditSubmit} className="p-5 space-y-4 overflow-y-auto">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[10px] font-black text-slate-600 mb-1 uppercase tracking-wider">
+                    Jornal Sugerido <span className="text-red-500">*</span>
+                  </label>
+                  <select
+                    value={editJournal}
+                    onChange={e => setEditJournal(e.target.value as any)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-bold focus:bg-white focus:ring-2 focus:ring-amber-500 outline-none cursor-pointer"
+                  >
+                    <option value="BG">Balanço Geral (BG)</option>
+                    <option value="Cidade Alerta">Cidade Alerta (CA)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-black text-slate-600 mb-1 uppercase tracking-wider">
+                    Pauteira Responsável
+                  </label>
+                  <select
+                    value={editPauteiraId}
+                    onChange={e => setEditPauteiraId(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-bold focus:bg-white focus:ring-2 focus:ring-amber-500 outline-none cursor-pointer"
+                  >
+                    {users.map(u => (
+                      <option key={u.uid} value={u.uid}>
+                        {getUserName(u.uid)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[10px] font-black text-slate-600 mb-1 uppercase tracking-wider">
+                    Telefone de Contato (WhatsApp)
+                  </label>
+                  <div className="relative">
+                    <Phone size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="text"
+                      value={editPhone}
+                      onChange={e => setEditPhone(e.target.value)}
+                      placeholder="(41) 99999-9999"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2.5 pl-9 pr-3 text-xs font-bold focus:bg-white focus:ring-2 focus:ring-amber-500 outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-black text-slate-600 mb-1 uppercase tracking-wider">
+                    Status da Mensagem
+                  </label>
+                  <select
+                    value={editStatus}
+                    onChange={e => setEditStatus(e.target.value as any)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-bold focus:bg-white focus:ring-2 focus:ring-amber-500 outline-none cursor-pointer"
+                  >
+                    <option value="pendente">Pendente / Triagem</option>
+                    <option value="pauta">Virou Pauta Oficial</option>
+                    <option value="resolvido">Resolvido</option>
+                    <option value="descartado">Descartado</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-black text-slate-600 mb-1 uppercase tracking-wider">
+                  Assunto Principal / Retranca <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={editSubject}
+                  onChange={e => setEditSubject(e.target.value)}
+                  placeholder="Ex: Acidente na BR-277..."
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-bold focus:bg-white focus:ring-2 focus:ring-amber-500 outline-none"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-black text-slate-600 mb-1 uppercase tracking-wider">
+                  Detalhes / Texto da Mensagem
+                </label>
+                <textarea
+                  rows={4}
+                  value={editDescription}
+                  onChange={e => setEditDescription(e.target.value)}
+                  placeholder="Texto completo enviado pelo telespectador, contexto, endereço, etc."
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs focus:bg-white focus:ring-2 focus:ring-amber-500 outline-none leading-relaxed"
+                />
+              </div>
+
+              {/* Attachments Section */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-[10px] font-black text-slate-600 uppercase tracking-wider">
+                    Anexos e Mídias ({editAttachments.length})
+                  </label>
+                  {isEditUploading && (
+                    <span className="text-[10px] font-bold text-amber-700 animate-pulse flex items-center gap-1">
+                      <RefreshCw size={11} className="animate-spin" /> Processando upload...
+                    </span>
+                  )}
+                </div>
+
+                <div
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setIsEditDraggingOver(true);
+                  }}
+                  onDragLeave={() => setIsEditDraggingOver(false)}
+                  onDrop={async (e) => {
+                    e.preventDefault();
+                    setIsEditDraggingOver(false);
+                    if (e.dataTransfer.files) {
+                      await processEditFiles(e.dataTransfer.files);
+                    }
+                  }}
+                  className={`border-2 border-dashed rounded-xl p-3 transition-colors ${
+                    isEditDraggingOver
+                      ? 'border-amber-500 bg-amber-50/60'
+                      : 'border-slate-200 hover:border-slate-300 bg-slate-50/50'
+                  }`}
+                >
+                  {editAttachments.length > 0 && (
+                    <div className="space-y-1.5 mb-2.5 max-h-36 overflow-y-auto">
+                      {editAttachments.map((att, idx) => (
+                        <div
+                          key={idx}
+                          className="bg-white border border-slate-200 rounded-lg p-2 flex items-center justify-between gap-2 text-xs shadow-2xs"
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            {att.type === 'image' ? (
+                              <div className="w-8 h-8 rounded bg-slate-100 border border-slate-200 overflow-hidden shrink-0 flex items-center justify-center">
+                                <img
+                                  src={att.dataUrl || att.url}
+                                  alt={att.name}
+                                  className="w-full h-full object-cover"
+                                />
+                              </div>
+                            ) : (
+                              <div className="w-8 h-8 rounded bg-slate-100 border border-slate-200 shrink-0 flex items-center justify-center text-slate-500">
+                                <Paperclip size={14} />
+                              </div>
+                            )}
+                            <div className="min-w-0">
+                              <p className="font-bold text-slate-800 text-[11px] truncate leading-tight">
+                                {att.name}
+                              </p>
+                              {att.size && (
+                                <span className="text-[10px] text-slate-400">
+                                  {(att.size / 1024 / 1024).toFixed(2)} MB
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setEditAttachments(prev => prev.filter((_, i) => i !== idx))}
+                            className="text-slate-400 hover:text-red-600 p-1 rounded-md hover:bg-red-50 transition-colors cursor-pointer shrink-0"
+                            title="Remover anexo"
+                          >
+                            <X size={14} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <label className="flex flex-col items-center justify-center py-2.5 px-2 cursor-pointer group">
+                    <div className="flex items-center gap-2 text-slate-600 group-hover:text-amber-700 font-bold text-xs">
+                      <Plus size={16} className="text-amber-600 group-hover:scale-110 transition-transform" />
+                      <span>Arraste ou clique para adicionar mais arquivos</span>
+                    </div>
+                    <span className="text-[10px] text-slate-400 mt-0.5">
+                      Fotos, vídeos, áudios, PDFs e planilhas (até 35MB)
+                    </span>
+                    <input
+                      type="file"
+                      multiple
+                      accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.txt"
+                      onChange={async (e) => {
+                        if (e.target.files) {
+                          await processEditFiles(e.target.files);
+                          e.target.value = '';
+                        }
+                      }}
+                      className="hidden"
+                      disabled={isEditUploading}
+                    />
+                  </label>
+                </div>
+              </div>
+
+              {/* Actions */}
+              <div className="flex gap-2.5 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={closeEditModal}
+                  className="flex-1 py-2.5 px-3 border border-slate-200 text-slate-600 rounded-xl text-xs font-black uppercase hover:bg-slate-50 cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isEditUploading}
+                  className="flex-[2] py-2.5 px-4 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-black uppercase shadow-md transition-all active:scale-95 cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  <Check size={14} strokeWidth={3} />
+                  Salvar Alterações
                 </button>
               </div>
             </form>
@@ -1282,22 +1673,55 @@ export default function WhatsAppMessages() {
               )}
 
               <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
-                <span className="text-slate-500 font-bold text-[11px]">
-                  Pauteira(o): <strong>{getUserName(selectedMessage.pauteiraId)}</strong>
-                </span>
-                {selectedMessage.status !== 'pauta' && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const msg = selectedMessage;
-                      setSelectedMessage(null);
-                      openConversionModal(msg);
-                    }}
-                    className="py-2 px-3.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black uppercase flex items-center gap-1.5 shadow-xs cursor-pointer"
-                  >
-                    <TrendingUp size={14} /> Gerar Pauta Oficial
-                  </button>
-                )}
+                <div>
+                  <span className="text-slate-500 font-bold text-[11px] block">
+                    Pauteira(o): <strong>{getUserName(selectedMessage.pauteiraId)}</strong>
+                  </span>
+                  <span className="text-slate-400 font-medium text-[10px] block">
+                    Criado por: <strong>{getUserName(selectedMessage.createdBy || selectedMessage.pauteiraId)}</strong>
+                    {isAuthorOf(selectedMessage) && (
+                      <span className="ml-1 text-emerald-700 font-bold">(Você)</span>
+                    )}
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {isAuthorOf(selectedMessage) ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const msg = selectedMessage;
+                        setSelectedMessage(null);
+                        openEditModal(msg);
+                      }}
+                      className="py-2 px-3 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-black uppercase flex items-center gap-1.5 shadow-xs cursor-pointer transition-all active:scale-95"
+                      title="Editar mensagem (você é o autor)"
+                    >
+                      <Pencil size={13} /> Editar
+                    </button>
+                  ) : (
+                    <span 
+                      className="py-1.5 px-2.5 bg-slate-100 border border-slate-200 text-slate-500 rounded-xl text-[10px] font-bold flex items-center gap-1.5"
+                      title={`Apenas o criador (${getUserName(selectedMessage.createdBy || selectedMessage.pauteiraId)}) pode editar`}
+                    >
+                      <Lock size={12} className="text-slate-400" /> Somente autor edita
+                    </span>
+                  )}
+
+                  {selectedMessage.status !== 'pauta' && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const msg = selectedMessage;
+                        setSelectedMessage(null);
+                        openConversionModal(msg);
+                      }}
+                      className="py-2 px-3.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black uppercase flex items-center gap-1.5 shadow-xs cursor-pointer"
+                    >
+                      <TrendingUp size={14} /> Gerar Pauta Oficial
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           </div>
@@ -1318,9 +1742,11 @@ function MessageColumn({
   onConvert,
   onUpdateStatus,
   onDelete,
+  onEdit,
   onSelect,
   onCopyPhone,
-  getUserName
+  getUserName,
+  isAuthorOf
 }: {
   title: string;
   description: string;
@@ -1331,9 +1757,11 @@ function MessageColumn({
   onConvert: (m: WhatsAppMessage) => void;
   onUpdateStatus: (id: string, s: WhatsAppMessage['status']) => void;
   onDelete: (id: string) => void;
+  onEdit: (m: WhatsAppMessage) => void;
   onSelect: (m: WhatsAppMessage) => void;
   onCopyPhone: (p?: string) => void;
   getUserName: (id: string) => string;
+  isAuthorOf: (m: WhatsAppMessage) => boolean;
 }) {
   return (
     <div className="bg-slate-100/70 border border-slate-200/90 rounded-2xl p-3 flex flex-col min-h-[500px]">
@@ -1366,9 +1794,11 @@ function MessageColumn({
               onConvert={onConvert}
               onUpdateStatus={onUpdateStatus}
               onDelete={onDelete}
+              onEdit={onEdit}
               onSelect={onSelect}
               onCopyPhone={onCopyPhone}
               getUserName={getUserName}
+              isAuthorOf={isAuthorOf}
             />
           ))
         )}
@@ -1383,20 +1813,25 @@ function MessageCard({
   onConvert,
   onUpdateStatus,
   onDelete,
+  onEdit,
   onSelect,
   onCopyPhone,
-  getUserName
+  getUserName,
+  isAuthorOf
 }: {
   key?: React.Key;
   msg: WhatsAppMessage;
   onConvert: (m: WhatsAppMessage) => void;
   onUpdateStatus: (id: string, s: WhatsAppMessage['status']) => void;
   onDelete: (id: string) => void;
+  onEdit: (m: WhatsAppMessage) => void;
   onSelect: (m: WhatsAppMessage) => void;
   onCopyPhone: (p?: string) => void;
   getUserName: (id: string) => string;
+  isAuthorOf: (m: WhatsAppMessage) => boolean;
 }) {
   const isBG = msg.journal === 'BG';
+  const canEdit = isAuthorOf(msg);
 
   return (
     <div className="bg-white rounded-xl border border-slate-200 hover:border-slate-300 shadow-2xs hover:shadow-xs p-3.5 transition-all space-y-2.5 group">
@@ -1460,19 +1895,43 @@ function MessageCard({
         )}
       </div>
 
-      {/* Pauteira attribution */}
+      {/* Pauteira attribution & Author Edit Action */}
       <div className="text-[10px] text-slate-400 font-bold flex items-center justify-between border-t border-slate-100 pt-2">
-        <span className="truncate max-w-[150px]">
+        <span className="truncate max-w-[125px]" title={`Pauteira: ${getUserName(msg.pauteiraId)}`}>
           Pauteira: <strong className="text-slate-700">{getUserName(msg.pauteiraId)}</strong>
         </span>
-        <button
-          type="button"
-          onClick={() => onDelete(msg.id)}
-          className="text-slate-300 hover:text-red-600 p-1 rounded-md transition-colors cursor-pointer"
-          title="Excluir mensagem"
-        >
-          <Trash2 size={12} />
-        </button>
+        <div className="flex items-center gap-1.5">
+          {canEdit ? (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onEdit(msg);
+              }}
+              className="text-amber-800 bg-amber-50 hover:bg-amber-100 border border-amber-300/80 px-2 py-0.5 rounded-md text-[10px] font-black uppercase flex items-center gap-1 transition-all cursor-pointer shadow-2xs active:scale-95"
+              title="Editar mensagem (você é o autor)"
+            >
+              <Pencil size={11} />
+              <span>Editar</span>
+            </button>
+          ) : (
+            <span
+              className="text-slate-400 bg-slate-100/80 border border-slate-200/80 px-1.5 py-0.5 rounded-md text-[9px] font-bold flex items-center gap-1 cursor-help"
+              title={`Apenas o criador (${getUserName(msg.createdBy || msg.pauteiraId)}) pode editar esta mensagem`}
+            >
+              <Lock size={10} className="text-slate-400" />
+              <span>Autor</span>
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={() => onDelete(msg.id)}
+            className="text-slate-300 hover:text-red-600 p-1 rounded-md transition-colors cursor-pointer"
+            title="Excluir mensagem"
+          >
+            <Trash2 size={12} />
+          </button>
+        </div>
       </div>
 
       {/* Didactic Action Buttons */}
