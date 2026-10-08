@@ -41,20 +41,20 @@ export function playUrgentChime() {
     const ctx = new AudioCtx();
     const now = ctx.currentTime;
 
-    // Siren-like sharp alternating chimes for urgent alerts (A5 -> D6 -> A5 -> D6)
-    const tones = [880, 1174.66, 880, 1174.66];
+    // Quick, crisp two-tone alert (A5 -> D6) ~160ms total
+    const tones = [880, 1174.66];
     tones.forEach((freq, idx) => {
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
-      const startTime = now + idx * 0.12;
+      const startTime = now + idx * 0.08;
       osc.type = 'sawtooth';
       osc.frequency.setValueAtTime(freq, startTime);
-      gain.gain.setValueAtTime(0.3, startTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, startTime + 0.22);
+      gain.gain.setValueAtTime(0.22, startTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, startTime + 0.12);
       osc.connect(gain);
       gain.connect(ctx.destination);
       osc.start(startTime);
-      osc.stop(startTime + 0.22);
+      osc.stop(startTime + 0.12);
     });
   } catch (e) {}
 }
@@ -94,7 +94,7 @@ export function getEditorSpokenName(editorIdOrName: string): string {
   if (clean.includes('zand')) return 'Zand';
   if (clean.includes('jamir')) return 'Jamir';
   if (clean.includes('jean')) return 'Jean';
-  if (clean.includes('miudo') || clean.includes('miú')) return 'Miúdo';
+  if (clean.includes('vagner') || clean.includes('miudo') || clean.includes('miú')) return 'Vagner';
   if (clean.includes('valdeilton') || clean.includes('valde')) return 'Valdeilton';
 
   const match = IMAGE_EDITORS_LIST.find(e => 
@@ -142,22 +142,24 @@ export function speakEditorAssignment(editorNameOrId: string, retrancaTitle?: st
       playMessageChime();
     }
 
-    const spokenName = getEditorSpokenName(editorNameOrId);
-    let textToSpeak = '';
+    const spokenName = getEditorSpokenName(editorNameOrId).toUpperCase();
+    const cleanTitle = (retrancaTitle || '').trim().toUpperCase();
 
+    // Concise, direct phrasing requested: "ATENÇÃO, JEAN! MATERIAL URGENTE ATRIBUÍDO A VOCÊ. [RETRANCA]"
+    let textToSpeak = '';
     if (isUrgent) {
-      textToSpeak = retrancaTitle 
-        ? `Urgência máxima! Atenção, ${spokenName}. Matéria urgente atribuída a você: ${retrancaTitle}. Prioridade total!`
-        : `Urgência máxima! Atenção, ${spokenName}. Matéria urgente atribuída a você na ilha de edição.`;
+      textToSpeak = cleanTitle 
+        ? `Atenção, ${spokenName}! Material urgente atribuído a você: ${cleanTitle}.`
+        : `Atenção, ${spokenName}! Material urgente atribuído a você.`;
     } else {
-      textToSpeak = retrancaTitle 
-        ? `Atenção, ${spokenName}. Nova matéria atribuída: ${retrancaTitle}.`
-        : `Atenção, ${spokenName}. Nova matéria atribuída na ilha de edição.`;
+      textToSpeak = cleanTitle 
+        ? `Atenção, ${spokenName}! Matéria atribuída a você: ${cleanTitle}.`
+        : `Atenção, ${spokenName}! Matéria atribuída a você.`;
     }
 
     setTimeout(() => {
-      speakUtterance(textToSpeak, isUrgent ? 1.08 : 1.05);
-    }, isUrgent ? 550 : 280);
+      speakUtterance(textToSpeak, isUrgent ? 1.12 : 1.08);
+    }, isUrgent ? 200 : 150);
   } catch (err) {
     console.warn('Speech announcement error:', err);
   }
@@ -214,13 +216,14 @@ export function speakUnassignedUrgentAnnouncement(retrancaTitle?: string) {
   try {
     playUrgentChime();
 
-    const textToSpeak = retrancaTitle
-      ? `Atenção ilhas de edição! Matéria urgente na fila aberta sem editor: ${retrancaTitle}. Quem puder assumir imediatamente!`
-      : `Atenção ilhas de edição! Nova matéria urgente na fila aberta. Quem puder assumir imediatamente!`;
+    const cleanTitle = (retrancaTitle || '').trim().toUpperCase();
+    const textToSpeak = cleanTitle
+      ? `Atenção! Material urgente na fila aberta: ${cleanTitle}.`
+      : `Atenção! Material urgente na fila aberta.`;
 
     setTimeout(() => {
-      speakUtterance(textToSpeak, 1.1);
-    }, 550);
+      speakUtterance(textToSpeak, 1.12);
+    }, 200);
   } catch (err) {
     console.warn('Speech announcement error:', err);
   }

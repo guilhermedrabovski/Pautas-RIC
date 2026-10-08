@@ -123,7 +123,7 @@ export default function Login() {
               { id: 'zand', name: 'Zand' },
               { id: 'jamir', name: 'Jamir' },
               { id: 'jean', name: 'Jean' },
-              { id: 'miudo', name: 'Miúdo' },
+              { id: 'vagner', name: 'Vagner' },
               { id: 'valdeilton', name: 'Valdeilton' },
             ].map(ed => (
               <button

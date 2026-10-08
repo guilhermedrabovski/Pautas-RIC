@@ -32,12 +32,13 @@ export const PREDEFINED_USERS = [
   // Cinegrafistas
   { username: 'jeffersonw', name: 'Jefferson Weiss', role: 'cinegrafista' },
 
-  // Editores de Imagem (Zand, Jamir, Jean, Miúdo, Valdeilton)
+  // Editores de Imagem (Zand, Jamir, Jean, Vagner, Valdeilton)
   { username: 'zand', name: 'Zand', role: 'editor' },
   { username: 'jamir', name: 'Jamir', role: 'editor' },
   { username: 'jean', name: 'Jean', role: 'editor' },
-  { username: 'miudo', name: 'Miúdo', role: 'editor' },
+  { username: 'vagner', name: 'Vagner', role: 'editor' },
   { username: 'valdeilton', name: 'Valdeilton', role: 'editor' },
+  { username: 'miudo', name: 'Vagner', role: 'editor' },
 
   // Outros Editores
   { username: 'lelo', name: 'Lelo', role: 'editor_texto' }
@@ -47,7 +48,7 @@ export const IMAGE_EDITORS_LIST = [
   { uid: 'zand', username: 'zand', name: 'Zand', role: 'editor' },
   { uid: 'jamir', username: 'jamir', name: 'Jamir', role: 'editor' },
   { uid: 'jean', username: 'jean', name: 'Jean', role: 'editor' },
-  { uid: 'miudo', username: 'miudo', name: 'Miúdo', role: 'editor' },
+  { uid: 'vagner', username: 'vagner', name: 'Vagner', role: 'editor' },
   { uid: 'valdeilton', username: 'valdeilton', name: 'Valdeilton', role: 'editor' }
 ];
 

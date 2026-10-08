@@ -1,18 +1,16 @@
 import React, { useEffect, useState } from 'react';
 import { collection, query, onSnapshot, orderBy } from 'firebase/firestore';
 import { db } from '../lib/firebase';
-import { PREDEFINED_USERS, IMAGE_EDITORS_LIST } from '../lib/constants';
+import { IMAGE_EDITORS_LIST } from '../lib/constants';
 import { 
   Film, 
   Play, 
   CheckCircle2, 
   Sparkles, 
-  AlertTriangle, 
   Clock, 
   Video, 
   ArrowRight,
   Flame,
-  Check,
   Plus
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
@@ -25,6 +23,8 @@ export interface EditorWorkloadItem {
   concludedRetrancas: any[];
   pendingRetrancas: any[];
   isFree: boolean;
+  hasUrgent: boolean;
+  isEditing: boolean;
   workloadScore: number;
   sharePercent: number;
 }
@@ -36,12 +36,12 @@ interface EditorWorkloadWidgetProps {
   showLinkToDashboard?: boolean;
 }
 
-// Official image editors of the newsroom: Zand, Jamir, Jean, Miúdo, Valdeilton
+// Official image editors of the newsroom: Zand, Jamir, Jean, Vagner, Valdeilton
 const OFFICIAL_IMAGE_EDITORS = [
   { uid: 'zand', username: 'zand', name: 'Zand', role: 'editor' },
   { uid: 'jamir', username: 'jamir', name: 'Jamir', role: 'editor' },
   { uid: 'jean', username: 'jean', name: 'Jean', role: 'editor' },
-  { uid: 'miudo', username: 'miudo', name: 'Miúdo', role: 'editor' },
+  { uid: 'vagner', username: 'vagner', name: 'Vagner', role: 'editor' },
   { uid: 'valdeilton', username: 'valdeilton', name: 'Valdeilton', role: 'editor' }
 ];
 
@@ -57,9 +57,9 @@ export default function EditorWorkloadWidget({
   const [retrancas, setRetrancas] = useState<any[]>(initialRetrancas || []);
   const [editorsList, setEditorsList] = useState<any[]>(initialEditors || []);
 
-  // Listen to retrancas if not supplied
+  // Listen to retrancas
   useEffect(() => {
-    if (initialRetrancas && initialRetrancas.length > 0) {
+    if (initialRetrancas !== undefined) {
       setRetrancas(initialRetrancas);
       return;
     }
@@ -70,35 +70,48 @@ export default function EditorWorkloadWidget({
     return unsub;
   }, [initialRetrancas]);
 
-  // Listen to editors / users, strictly filtering for Zand, Jamir, Jean, Miúdo
+  // Listen to editors / users
   useEffect(() => {
-    const predefinedEditors = IMAGE_EDITORS_LIST;
-
-    if (initialEditors && initialEditors.length > 0) {
+    if (initialEditors !== undefined && initialEditors.length > 0) {
       setEditorsList(initialEditors);
       return;
     }
 
     const q = query(collection(db, 'users'));
     const unsub = onSnapshot(q, snap => {
-      const dbUsers = snap.docs.map(d => ({ uid: d.id, ...d.data() }));
+      const dbUsers = snap.docs.map(d => ({ id: d.id, uid: d.id, ...d.data() }));
       setEditorsList(dbUsers);
     }, () => {
-      setEditorsList(predefinedEditors);
+      setEditorsList(IMAGE_EDITORS_LIST);
     });
 
     return unsub;
   }, [initialEditors]);
 
-  // Strictly and exclusively Zand, Jamir, Jean, Miúdo (unicos editores de imagem)
+  // Resolve all aliases and known IDs (both Auth UID and username) for each editor
   const effectiveEditors = OFFICIAL_IMAGE_EDITORS.map(official => {
     const found = editorsList.find((e: any) => {
-      const uid = normalizeStr(e.uid || e.username || e.id);
-      const name = normalizeStr(e.name);
-      return uid === official.uid || name === official.uid || name.includes(official.uid);
+      const rawId = normalizeStr(e.id || e.uid || '');
+      const rawUser = normalizeStr(e.username || '');
+      const rawName = normalizeStr(e.name || '');
+      const target = official.uid;
+      const isLegacyMatch = target === 'vagner' && (rawId === 'miudo' || rawUser === 'miudo' || rawName.includes('miudo'));
+      return rawId === target || rawUser === target || rawName === target || rawName.includes(target) || rawId.includes(target) || isLegacyMatch;
     });
+
+    const extraAliases = official.uid === 'vagner' ? ['miudo', 'miú'] : [];
+    const allKnownIds = Array.from(new Set([
+      official.uid,
+      official.username,
+      found?.id,
+      found?.uid,
+      normalizeStr(official.name),
+      ...extraAliases
+    ].filter(Boolean).map(s => normalizeStr(String(s)))));
+
     return {
-      uid: official.uid,
+      uid: found?.id || found?.uid || official.uid,
+      allKnownIds,
       username: official.username,
       name: official.name,
       role: 'editor',
@@ -106,32 +119,58 @@ export default function EditorWorkloadWidget({
     };
   });
 
-  // Helper to match an editor with a retranca
-  const isMatch = (ed: any, retrancaEditorId: string) => {
-    if (!retrancaEditorId) return false;
-    const target = normalizeStr(retrancaEditorId);
-    const uid = normalizeStr(ed.uid);
-    const uname = normalizeStr(ed.username);
-    const name = normalizeStr(ed.name);
-    return target === uid || target === uname || target === name || target.includes(uid) || uid.includes(target);
+  // Comprehensive match between editor and retranca (handles Auth UIDs, usernames, names)
+  const isMatch = (ed: any, r: any) => {
+    if (!r) return false;
+    const target = normalizeStr(r.editorId || '');
+    const targetName = normalizeStr(r.editorName || '');
+
+    if (!target && !targetName) return false;
+
+    // Direct match against known IDs
+    if (target) {
+      if (ed.allKnownIds && ed.allKnownIds.includes(target)) return true;
+      if (normalizeStr(ed.uid) === target || normalizeStr(ed.username) === target || normalizeStr(ed.name) === target) return true;
+      if (target.includes(normalizeStr(ed.name)) || normalizeStr(ed.name).includes(target)) return true;
+
+      // Cross reference with users list to map UID -> Name
+      const matchingUser = editorsList.find((u: any) => normalizeStr(u.id || u.uid || '') === target);
+      if (matchingUser) {
+        const uName = normalizeStr(matchingUser.name || '');
+        const edName = normalizeStr(ed.name);
+        if (uName === edName || uName.includes(edName) || edName.includes(uName)) return true;
+      }
+    }
+
+    // Match by editorName
+    if (targetName) {
+      const edName = normalizeStr(ed.name);
+      if (targetName === edName || targetName.includes(edName) || edName.includes(targetName)) return true;
+    }
+
+    return false;
   };
 
   // Calculate statistics per editor
-  const totalActiveEditing = retrancas.filter(r => r.status === 'editando' && !!r.editorId).length;
-
+  // An editor is occupied if they have ANY retranca assigned that is NOT concluded ('editando' OR 'pendente')
   const editorStats: EditorWorkloadItem[] = effectiveEditors.map(ed => {
-    const active = retrancas.filter(r => r.status === 'editando' && isMatch(ed, r.editorId));
-    const concluded = retrancas.filter(r => r.status === 'concluido' && isMatch(ed, r.editorId));
-    const pending = retrancas.filter(r => r.status === 'pendente' && isMatch(ed, r.editorId));
+    const active = retrancas.filter(r => 
+      (r.status === 'editando' || r.status === 'pendente') && isMatch(ed, r)
+    );
+    const concluded = retrancas.filter(r => 
+      r.status === 'concluido' && isMatch(ed, r)
+    );
+    const pending = retrancas.filter(r => 
+      r.status === 'pendente' && isMatch(ed, r)
+    );
+    const editing = retrancas.filter(r => 
+      r.status === 'editando' && isMatch(ed, r)
+    );
+    const hasUrgent = active.some(r => !!r.isUrgent);
+
     const isFree = active.length === 0;
-
-    // Percentage of active editing relative to total active load
-    const sharePercent = totalActiveEditing > 0 
-      ? Math.round((active.length / totalActiveEditing) * 100) 
-      : 0;
-
-    // Workload score (0% if none, 50% if 1, 100% if 2+)
-    const workloadScore = active.length === 0 ? 0 : active.length === 1 ? 50 : 100;
+    const isEditing = editing.length > 0;
+    const workloadScore = isFree ? 0 : 100;
 
     return {
       id: ed.uid || ed.username,
@@ -141,8 +180,10 @@ export default function EditorWorkloadWidget({
       concludedRetrancas: concluded,
       pendingRetrancas: pending,
       isFree,
+      hasUrgent,
+      isEditing,
       workloadScore,
-      sharePercent
+      sharePercent: isFree ? 0 : 100
     };
   });
 
@@ -165,9 +206,12 @@ export default function EditorWorkloadWidget({
               <span className="bg-blue-100 text-ric-blue text-[10px] font-black uppercase px-2 py-0.5 rounded-full">
                 Ao Vivo
               </span>
+              <span className="text-xs font-bold text-slate-500">
+                ({busyEditors.length} ocupada{busyEditors.length !== 1 ? 's' : ''} • {freeEditors.length} livre{freeEditors.length !== 1 ? 's' : ''})
+              </span>
             </div>
             <p className="text-xs text-ric-muted font-bold">
-              Disponibilidade e ocupação dos editores em tempo real
+              Disponibilidade e ocupação dos editores de imagem em tempo real
             </p>
           </div>
         </div>
@@ -217,78 +261,124 @@ export default function EditorWorkloadWidget({
           </div>
         </div>
       ) : (
-        <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl text-xs font-bold text-blue-900 flex items-center gap-2">
-          <Flame size={16} className="text-orange-500" />
-          <span>Todos os editores estão ocupados no momento com material em edição.</span>
+        <div className="p-3.5 bg-red-50 border-2 border-red-300 rounded-xl text-xs font-black text-red-900 flex items-center justify-between shadow-xs">
+          <div className="flex items-center gap-2">
+            <Flame size={18} className="text-red-600 animate-pulse" />
+            <span>Capacidade Máxima: Todas as 5 ilhas de edição estão ocupadas com material em produção!</span>
+          </div>
+          <span className="text-[10px] bg-red-200 text-red-900 px-2.5 py-0.5 rounded-full font-black uppercase">
+            100% Ocupadas
+          </span>
         </div>
       )}
 
-      {/* Editors Grid Cards (Zand, Jamir, Jean, Miúdo, Valdeilton) */}
+      {/* Editors Grid Cards (Zand, Jamir, Jean, Vagner, Valdeilton) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 pt-1">
         {editorStats.map(editor => {
           const isFree = editor.isFree;
           const currentRetranca = editor.activeRetrancas[0];
+          const hasUrgent = editor.hasUrgent;
+          const isEditingNow = editor.isEditing;
+          const count = editor.activeRetrancas.length;
+
+          // Highly visible color changing based on workload state
+          const cardStyle = hasUrgent
+            ? 'border-2 border-red-500 bg-gradient-to-b from-red-50/90 via-white to-red-50/40 ring-2 ring-red-400/40 shadow-md'
+            : !isFree && count >= 2
+              ? 'border-2 border-amber-500 bg-gradient-to-b from-amber-50/90 via-white to-amber-50/40 ring-2 ring-amber-400/30 shadow-md'
+              : !isFree
+                ? 'border-2 border-blue-600 bg-gradient-to-b from-blue-50/90 via-white to-blue-50/40 ring-2 ring-blue-400/30 shadow-md'
+                : 'border-2 border-emerald-400 bg-gradient-to-b from-emerald-50/70 via-white to-emerald-50/30 ring-2 ring-emerald-400/20 shadow-xs';
+
+          const badgeStyle = hasUrgent
+            ? 'bg-red-600 text-white shadow-xs animate-pulse'
+            : !isFree && count >= 2
+              ? 'bg-amber-600 text-white shadow-xs'
+              : !isFree && isEditingNow
+                ? 'bg-blue-600 text-white shadow-xs'
+                : !isFree
+                  ? 'bg-blue-500 text-white shadow-xs'
+                  : 'bg-emerald-600 text-white shadow-xs animate-pulse';
+
+          const badgeText = hasUrgent
+            ? '🚨 URGENTE'
+            : !isFree && count >= 2
+              ? `⚡ ${count} PAUTAS`
+              : !isFree && isEditingNow
+                ? '▶️ EDITANDO'
+                : !isFree
+                  ? '⏱️ NA ILHA'
+                  : '🟢 LIVRE';
 
           return (
             <div
               key={editor.id}
-              className={`rounded-xl p-3.5 flex flex-col justify-between transition-all relative overflow-hidden ${
-                isFree 
-                  ? 'border-2 border-emerald-400 bg-emerald-50/40 shadow-xs hover:border-emerald-500 ring-2 ring-emerald-400/20' 
-                  : 'border border-blue-200 bg-white shadow-xs hover:border-blue-400 hover:shadow-md'
-              }`}
+              className={`rounded-2xl p-4 flex flex-col justify-between transition-all relative overflow-hidden ${cardStyle}`}
             >
               {/* Top Row: Name and Status Badge */}
               <div>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-[13px] font-black text-slate-900 uppercase tracking-tight">
+                <div className="flex items-center justify-between mb-2.5">
+                  <span className="text-[14px] font-black text-slate-900 uppercase tracking-tight">
                     {editor.name}
                   </span>
-                  {isFree ? (
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-emerald-600 text-white shadow-xs flex items-center gap-1 animate-pulse">
-                      <Sparkles size={11} /> LIVRE
-                    </span>
-                  ) : (
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-blue-600 text-white shadow-xs flex items-center gap-1">
-                      <Play size={10} fill="white" /> EDITANDO
-                    </span>
-                  )}
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase flex items-center gap-1 ${badgeStyle}`}>
+                    {badgeText}
+                  </span>
                 </div>
 
                 {/* Percentage Meter & Workload */}
-                <div className="space-y-1 mb-2.5">
-                  <div className="flex justify-between items-center text-[10px] font-black uppercase">
-                    <span className={isFree ? 'text-emerald-700' : 'text-blue-900'}>
-                      {isFree ? 'Ocupação: 0%' : `Editando: ${editor.activeRetrancas.length} pauta(s)`}
+                <div className="space-y-1.5 mb-3">
+                  <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-tight">
+                    <span className={
+                      hasUrgent 
+                        ? 'text-red-950 font-black' 
+                        : !isFree 
+                          ? 'text-blue-950 font-black' 
+                          : 'text-emerald-800'
+                    }>
+                      {isFree 
+                        ? 'Ocupação: 0%' 
+                        : hasUrgent
+                          ? 'Ocupação: 100%'
+                          : count >= 2
+                            ? `Ocupação: 100% (${count} pautas)`
+                            : 'Ocupação: 100%'}
                     </span>
-                    <span className={isFree ? 'text-emerald-600 font-extrabold' : 'text-blue-700 font-extrabold'}>
-                      {isFree ? 'Disponível' : `${editor.sharePercent}% do fluxo`}
+                    <span className={
+                      hasUrgent 
+                        ? 'text-red-700 font-black' 
+                        : !isFree 
+                          ? 'text-blue-700 font-extrabold' 
+                          : 'text-emerald-600 font-extrabold'
+                    }>
+                      {isFree ? 'Disponível' : isEditingNow ? 'Em Edição' : 'Fila Atribuída'}
                     </span>
                   </div>
 
                   {/* Visual Progress Bar */}
-                  <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
+                  <div className="w-full h-2.5 bg-slate-200/80 rounded-full overflow-hidden p-0.5">
                     <div 
                       className={`h-full rounded-full transition-all duration-500 ${
                         isFree 
-                          ? 'w-0 bg-gray-200' 
-                          : editor.activeRetrancas.length >= 2 
-                            ? 'bg-amber-500' 
-                            : 'bg-blue-600'
+                          ? 'w-0' 
+                          : hasUrgent
+                            ? 'w-full bg-gradient-to-r from-red-600 to-amber-500 animate-pulse'
+                            : count >= 2
+                              ? 'w-full bg-gradient-to-r from-amber-500 to-orange-500'
+                              : 'w-full bg-blue-600'
                       }`}
-                      style={{ width: isFree ? '0%' : `${Math.max(25, editor.sharePercent || 100)}%` }}
                     />
                   </div>
                 </div>
 
                 {/* Content Details: What they are editing or Free Alert */}
                 {isFree ? (
-                  <div className="bg-emerald-100/70 border border-emerald-200 rounded-lg p-2.5 text-center text-emerald-900 text-[11px] font-bold space-y-2">
+                  <div className="bg-emerald-100/80 border border-emerald-300 rounded-xl p-2.5 text-center text-emerald-950 text-[11px] font-bold space-y-2">
                     <div>
-                      <div className="font-black text-emerald-800 text-[11px] uppercase flex items-center justify-center gap-1">
-                        <Sparkles size={12} /> 100% Livre
+                      <div className="font-black text-emerald-900 text-[11px] uppercase flex items-center justify-center gap-1">
+                        <Sparkles size={13} className="text-emerald-600" /> 100% Livre
                       </div>
-                      <div className="text-[10px] text-emerald-700 mt-0.5">
+                      <div className="text-[10px] text-emerald-800 mt-0.5">
                         Pronto para nova retranca
                       </div>
                     </div>
@@ -303,15 +393,18 @@ export default function EditorWorkloadWidget({
                     )}
                   </div>
                 ) : (
-                  <div className={`rounded-lg p-2 space-y-1 transition-all ${
+                  <div className={`rounded-xl p-2.5 space-y-1.5 transition-all shadow-xs ${
                     currentRetranca?.isUrgent 
-                      ? 'bg-red-50 border-2 border-red-500 ring-2 ring-red-400/30' 
-                      : 'bg-blue-50/70 border border-blue-200/80'
+                      ? 'bg-red-100/90 border-2 border-red-500 text-red-950' 
+                      : 'bg-white border-2 border-blue-400 text-slate-900'
                   }`}>
-                    <div className="flex items-center justify-between gap-1">
-                      <div className={`text-[11px] font-black uppercase line-clamp-1 ${
-                        currentRetranca?.isUrgent ? 'text-red-950 font-black' : 'text-blue-950'
-                      }`} title={currentRetranca?.title}>
+                    <div className="flex items-start justify-between gap-1.5">
+                      <div 
+                        className={`text-[11px] font-black uppercase line-clamp-2 leading-tight ${
+                          currentRetranca?.isUrgent ? 'text-red-950 font-black' : 'text-blue-950'
+                        }`} 
+                        title={currentRetranca?.title}
+                      >
                         {currentRetranca?.title || 'Retranca em produção'}
                       </div>
                       {currentRetranca?.isUrgent && (
@@ -320,16 +413,25 @@ export default function EditorWorkloadWidget({
                         </span>
                       )}
                     </div>
-                    <div className="flex items-center justify-between text-[10px] text-blue-700 font-bold">
-                      <span className="flex items-center gap-1">
-                        <Video size={10} /> {currentRetranca?.format || 'VT'}
+                    
+                    <div className="flex items-center justify-between text-[10px] font-bold pt-1 border-t border-slate-200/60">
+                      <span className="flex items-center gap-1 text-slate-700">
+                        <Video size={11} className="text-blue-600" /> {currentRetranca?.format || 'VT'}
                       </span>
-                      {currentRetranca?.deadline && (
-                        <span className="flex items-center gap-1 text-ric-red font-black">
-                          <Clock size={10} /> {currentRetranca.deadline}
+                      {currentRetranca?.deadline ? (
+                        <span className="flex items-center gap-1 text-red-700 font-black">
+                          <Clock size={11} /> {currentRetranca.deadline}
                         </span>
+                      ) : (
+                        <span className="text-[9px] text-slate-500">Sem horário</span>
                       )}
                     </div>
+
+                    {count > 1 && (
+                      <div className="text-[9px] font-black text-amber-900 bg-amber-100 px-1.5 py-0.5 rounded border border-amber-300 text-center">
+                        + {count - 1} outra(s) matéria(s) na fila
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

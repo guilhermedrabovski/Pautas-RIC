@@ -64,6 +64,7 @@ export interface Retranca {
   updates?: RetrancaUpdate[];
   createdBy: string;
   createdByName?: string;
+  claimedBy?: string;
   createdAt: number;
   updatedAt?: number;
 }
@@ -172,7 +173,7 @@ export default function EditorDashboard() {
   const prevRetrancasRef = useRef<Map<string, Retranca>>(new Map());
 
   const cleanUserUid = (userData?.uid || '').toLowerCase().trim();
-  const isImageEditorUser = ['zand', 'jamir', 'jean', 'miudo', 'valdeilton'].includes(cleanUserUid) || userData?.role === 'editor';
+  const isImageEditorUser = ['zand', 'jamir', 'jean', 'vagner', 'valdeilton', 'miudo'].includes(cleanUserUid) || userData?.role === 'editor';
 
   const isPauteiro = !isImageEditorUser && (
     ['admin', 'pauteiro', 'pauteira'].includes(userData?.role || '') ||
@@ -180,13 +181,13 @@ export default function EditorDashboard() {
     (userData?.name || '').toLowerCase().includes('guilherme')
   );
 
-  // Load Image Editors (Zand, Jamir, Jean, Miúdo, Valdeilton)
+  // Load Image Editors (Zand, Jamir, Jean, Vagner, Valdeilton)
   useEffect(() => {
     const predefinedEditors: User[] = [
       { uid: 'zand', name: 'Zand', email: 'zand@ric.com.br', role: 'editor' },
       { uid: 'jamir', name: 'Jamir', email: 'jamir@ric.com.br', role: 'editor' },
       { uid: 'jean', name: 'Jean', email: 'jean@ric.com.br', role: 'editor' },
-      { uid: 'miudo', name: 'Miúdo', email: 'miudo@ric.com.br', role: 'editor' },
+      { uid: 'vagner', name: 'Vagner', email: 'vagner@ric.com.br', role: 'editor' },
       { uid: 'valdeilton', name: 'Valdeilton', email: 'valdeilton@ric.com.br', role: 'editor' },
     ];
 
@@ -196,7 +197,7 @@ export default function EditorDashboard() {
       const firestoreEditors = allUsers.filter(u => {
         const cleanId = (u.uid || '').toLowerCase().trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
         const cleanName = (u.name || '').toLowerCase().trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-        return ['zand', 'jamir', 'jean', 'miudo', 'valdeilton'].some(target => cleanId === target || cleanName === target || cleanName.includes(target));
+        return ['zand', 'jamir', 'jean', 'vagner', 'valdeilton', 'miudo'].some(target => cleanId === target || cleanName === target || cleanName.includes(target));
       });
       
       const merged = [...predefinedEditors];
@@ -228,9 +229,8 @@ export default function EditorDashboard() {
           const isAssignedToMe = isTargetOfRetranca(r);
           const isUnassigned = !r.editorId;
 
-          // Condition 1: Brand new retranca assigned to me
-          if (!prev && isAssignedToMe) {
-            speakEditorAssignment(r.editorId, r.title, !!r.isUrgent);
+          // Condition 1: Brand new retranca assigned to me (incoming from someone else)
+          if (!prev && isAssignedToMe && r.createdBy !== userData.uid) {
             setRealtimeAlert({
               retranca: r,
               message: r.isUrgent 
@@ -241,13 +241,11 @@ export default function EditorDashboard() {
             toast.success(`🔔 Nova retranca para você: ${r.title}`, { duration: 6000 });
           }
           // Condition 2: Brand new unassigned urgent retranca (announce out loud to all editors)
-          else if (!prev && isUnassigned && r.isUrgent) {
-            speakUnassignedUrgentAnnouncement(r.title);
+          else if (!prev && isUnassigned && r.isUrgent && r.createdBy !== userData.uid) {
             toast(`🚨 RETRANCA URGENTE NA FILA ABERTA: ${r.title}`, { icon: '🔥', duration: 8000 });
           }
-          // Condition 3: Existing retranca was assigned to me
-          else if (prev && prev.editorId !== userData.uid && isAssignedToMe) {
-            speakEditorAssignment(r.editorId, r.title, !!r.isUrgent);
+          // Condition 3: Existing retranca was assigned to me by someone else (not self-claimed)
+          else if (prev && prev.editorId !== userData.uid && isAssignedToMe && r.claimedBy !== userData.uid && r.createdBy !== userData.uid) {
             setRealtimeAlert({
               retranca: r,
               message: r.isUrgent 
@@ -307,11 +305,8 @@ export default function EditorDashboard() {
         updatedAt: Date.now()
       });
 
-      if (editorId) {
-        speakEditorAssignment(editorId, title.trim().toUpperCase(), isUrgent);
-      } else if (isUrgent) {
-        speakUnassignedUrgentAnnouncement(title.trim().toUpperCase());
-      }
+      // Emit local confirmation sound for creator
+      playSuccessChime();
 
       // Dispatch Web Push Notification (FCM / VAPID) for background alerts
       if (isUrgent) {
@@ -437,6 +432,7 @@ export default function EditorDashboard() {
       await updateDoc(doc(db, 'retrancas', retranca.id), {
         editorId: userData.uid,
         status: 'editando',
+        claimedBy: userData.uid,
         updatedAt: Date.now()
       });
       toast.success(`Você assumiu a edição de "${retranca.title}"!`);
@@ -479,7 +475,7 @@ export default function EditorDashboard() {
     if (cleanId === 'zand') return 'Zand';
     if (cleanId === 'jamir') return 'Jamir';
     if (cleanId === 'jean') return 'Jean';
-    if (cleanId === 'miudo') return 'Miúdo';
+    if (cleanId === 'vagner' || cleanId === 'miudo') return 'Vagner';
     if (cleanId === 'valdeilton') return 'Valdeilton';
     const found = editors.find(e => {
       const eUid = (e.uid || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
@@ -508,8 +504,8 @@ export default function EditorDashboard() {
     if (myUid && (myUid.includes(target) || target.includes(myUid))) return true;
     if (myUsername && (myUsername.includes(target) || target.includes(myUsername))) return true;
 
-    // Check image editors explicitly (Zand, Jamir, Jean, Miúdo, Valdeilton)
-    const imageEditors = ['zand', 'jamir', 'jean', 'miudo', 'valdeilton'];
+    // Check image editors explicitly (Zand, Jamir, Jean, Vagner, Valdeilton)
+    const imageEditors = ['zand', 'jamir', 'jean', 'vagner', 'valdeilton', 'miudo'];
     for (const ed of imageEditors) {
       if (target.includes(ed) && (myName.includes(ed) || myUid.includes(ed) || myEmail.includes(ed) || myUsername.includes(ed))) {
         return true;
@@ -588,12 +584,12 @@ export default function EditorDashboard() {
           <button
             type="button"
             onClick={() => {
-              const testEditor = userData?.name || 'Zand';
+              const testEditor = userData?.name || 'Jean';
               speakEditorAssignment(testEditor, 'BATIDA NA BR 277', false);
-              toast.success(`🔊 Testando anúncio normal: "${testEditor}"`, { icon: '🎙️' });
+              toast(`🔊 ATENÇÃO, ${testEditor.toUpperCase()}! MATÉRIA ATRIBUÍDA A VOCÊ. BATIDA NA BR 277`, { icon: '🎙️', duration: 5000 });
             }}
             className="py-2.5 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-black uppercase flex items-center gap-1.5 transition-all cursor-pointer active:scale-95"
-            title="Testar voz normal com o nome do editor"
+            title="Testar áudio curto: ATENÇÃO, [NOME]! MATÉRIA ATRIBUÍDA A VOCÊ."
           >
             <Volume2 size={15} />
             Testar Voz
@@ -602,11 +598,12 @@ export default function EditorDashboard() {
           <button
             type="button"
             onClick={() => {
-              speakUnassignedUrgentAnnouncement('MEGA OPERAÇÃO POLICIAL');
-              toast.error('🚨 Testando alerta de Retranca Urgente aberta!', { icon: '🔥' });
+              const testEditor = userData?.name || 'Jean';
+              speakEditorAssignment(testEditor, 'MEGA OPERAÇÃO POLICIAL', true);
+              toast.error(`🚨 ATENÇÃO, ${testEditor.toUpperCase()}! MATERIAL URGENTE ATRIBUÍDO A VOCÊ. MEGA OPERAÇÃO POLICIAL`, { duration: 6000 });
             }}
             className="py-2.5 px-3 bg-red-100 hover:bg-red-200 text-red-800 border border-red-300 rounded-xl text-xs font-black uppercase flex items-center gap-1.5 transition-all cursor-pointer active:scale-95"
-            title="Testar anúncio sonoro de retranca URGENTE aberta a todos"
+            title="Testar áudio urgente curto: ATENÇÃO, [NOME]! MATERIAL URGENTE ATRIBUÍDO A VOCÊ."
           >
             <Flame size={15} className="text-red-600" />
             Testar Voz Urgente

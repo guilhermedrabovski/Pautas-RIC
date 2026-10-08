@@ -91,7 +91,7 @@ export default function EditorialChat() {
   const availableMentionUsers = useMemo(() => {
     const map = new Map<string, { uid: string; name: string; role: string; email?: string; username?: string; fcmTokens?: string[] }>();
 
-    // 1. Predefined image editors (Zand, Jamir, Jean, Miúdo, Valdeilton)
+    // 1. Predefined image editors (Zand, Jamir, Jean, Vagner, Valdeilton)
     IMAGE_EDITORS_LIST.forEach(e => {
       map.set(e.uid.toLowerCase(), {
         uid: e.uid,

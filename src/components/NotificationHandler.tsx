@@ -163,7 +163,11 @@ export default function NotificationHandler() {
           const wasAssignedToMe = prev && isMatchMe(prev.editorId);
 
           // 1. Voice Announcement & Desktop Alert: Brand NEW UNASSIGNED URGENT retranca -> announce to everyone!
-          if (!prev && isUnassigned && isUrgent) {
+          // (Only if not created by me)
+          const isCreatedByMe = data.createdBy === userData.uid || (userData.name && data.createdByName?.toLowerCase() === userData.name.toLowerCase());
+          const isSelfClaimed = data.claimedBy === myUid || data.claimedBy === myName;
+
+          if (!prev && isUnassigned && isUrgent && !isCreatedByMe) {
             speakUnassignedUrgentAnnouncement(data.title);
             toast.error(`🚨 RETRANCA URGENTE NA FILA ABERTA: ${data.title}!`, { duration: 9000 });
 
@@ -175,8 +179,9 @@ export default function NotificationHandler() {
             });
           }
 
-          // 2. Voice Announcement & Desktop Alert when a retranca is assigned to the current user (Editor)
-          else if (isNowAssignedToMe && (!wasAssignedToMe || (prev && prev.editorId !== data.editorId))) {
+          // 2. Voice Announcement & Desktop Alert when a retranca ARRIVES assigned to this Editor
+          // CRITICAL: Must ONLY speak when it arrives ("quando chega"), NOT when the editor accepts/claims it himself!
+          else if (isNowAssignedToMe && (!wasAssignedToMe || (prev && prev.editorId !== data.editorId)) && !isCreatedByMe && !isSelfClaimed) {
             speakEditorAssignment(data.editorId || userData.name || 'Editor', data.title, isUrgent);
             
             const alertTitle = isUrgent 
