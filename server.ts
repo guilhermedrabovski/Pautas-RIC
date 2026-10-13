@@ -1,6 +1,7 @@
 import express from "express";
 import path from "path";
 import fs from "fs";
+import multer from "multer";
 import { createServer as createViteServer } from "vite";
 import admin from "firebase-admin";
 import { getFirestore } from "firebase-admin/firestore";
@@ -76,11 +77,32 @@ async function startServer() {
     fs.mkdirSync(uploadsDir, { recursive: true });
   }
 
-  // Safe JSON & urlencoded body parser with 50mb limit for file uploads and base64 payloads
-  app.use(express.json({ limit: '50mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+  // Multer disk storage for fast streaming binary uploads (multipart/form-data)
+  // Essential for large video files (up to 150MB) without memory bloating
+  const storage = multer.diskStorage({
+    destination: (_req, _file, cb) => {
+      cb(null, uploadsDir);
+    },
+    filename: (_req, file, cb) => {
+      const ext = path.extname(file.originalname) || '';
+      const baseRaw = path.basename(file.originalname, ext).replace(/[^a-zA-Z0-9_-]/g, '_').substring(0, 40) || 'arquivo';
+      const safeFilename = `${Date.now()}_${Math.random().toString(36).substring(2, 8)}_${baseRaw}${ext}`;
+      cb(null, safeFilename);
+    }
+  });
 
-  // Serve static files from public/uploads
+  const upload = multer({
+    storage,
+    limits: {
+      fileSize: 150 * 1024 * 1024 // 150MB limit per file
+    }
+  });
+
+  // Safe JSON & urlencoded body parser with 150mb limit for file uploads and base64 payloads
+  app.use(express.json({ limit: '150mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '150mb' }));
+
+  // Serve static files from public/uploads with range request support for video playback
   app.use('/uploads', express.static(uploadsDir));
 
   // Health check
@@ -88,7 +110,35 @@ async function startServer() {
     res.json({ status: "ok", time: new Date().toISOString() });
   });
 
-  // File upload route for WhatsApp suggestions & attachments
+  // Multipart Binary File Upload (RECOMMENDED for videos & large files)
+  app.post("/api/upload-file", (req, res, next) => {
+    upload.single('file')(req, res, (err) => {
+      if (err) {
+        console.error("[Upload Multer Error]:", err);
+        if (err.code === 'LIMIT_FILE_SIZE') {
+          return res.status(400).json({ error: "O vídeo/arquivo excede o limite máximo permitido de 150MB." });
+        }
+        return res.status(400).json({ error: err.message || "Erro ao processar upload do arquivo." });
+      }
+
+      if (!req.file) {
+        return res.status(400).json({ error: "Nenhum arquivo enviado no campo 'file'." });
+      }
+
+      const fileUrl = `/uploads/${req.file.filename}`;
+      console.log(`[Upload] Vídeo/Arquivo salvo via Multipart: ${req.file.filename} (${req.file.size} bytes)`);
+
+      return res.json({
+        success: true,
+        name: req.file.originalname,
+        url: fileUrl,
+        type: req.file.mimetype || 'video/mp4',
+        size: req.file.size
+      });
+    });
+  });
+
+  // File upload route (Base64 JSON Fallback)
   app.post("/api/upload", (req, res) => {
     try {
       const { name, type, data } = req.body;
@@ -109,8 +159,8 @@ async function startServer() {
       }
 
       const buffer = Buffer.from(base64Data, 'base64');
-      if (buffer.length > 35 * 1024 * 1024) {
-        return res.status(400).json({ error: "Arquivo excede o limite máximo permitido de 35MB." });
+      if (buffer.length > 150 * 1024 * 1024) {
+        return res.status(400).json({ error: "Arquivo excede o limite máximo permitido de 150MB." });
       }
 
       const ext = path.extname(name) || '';

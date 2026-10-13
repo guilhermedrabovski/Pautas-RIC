@@ -45,7 +45,8 @@ import {
   RefreshCw,
   Copy,
   Pencil,
-  Lock
+  Lock,
+  Video
 } from 'lucide-react';
 import { confirmAction } from '../lib/confirmHelper';
 
@@ -189,36 +190,44 @@ export default function WhatsAppMessages() {
     const files = Array.from(fileList);
     if (!files || files.length === 0) return;
 
-    const MAX_FILE_SIZE = 35 * 1024 * 1024; // 35MB
+    const MAX_FILE_SIZE = 150 * 1024 * 1024; // 150MB (Ideal para vídeos de WhatsApp e reportagem)
     setTargetUploading(true);
     const newAttachments = [...currentAttachments];
 
     for (const file of files) {
       if (file.size > MAX_FILE_SIZE) {
-        toast.error(`Arquivo "${file.name}" excede o limite de 35MB`);
+        toast.error(`Arquivo "${file.name}" excede o limite máximo de 150MB.`);
         continue;
       }
 
-      const fileTypeCategory = file.type.startsWith('image/')
-        ? 'image'
-        : file.type.startsWith('video/')
-        ? 'video'
-        : file.type.startsWith('audio/')
-        ? 'audio'
+      // Detecção ampla de tipo (inclusive quando navegador não define MIME)
+      const isVideoFile = file.type.startsWith('video/') || /\.(mp4|mov|m4v|webm|avi|mkv|3gp|wmv|flv|ts|ogv)$/i.test(file.name);
+      const isImageFile = file.type.startsWith('image/') || /\.(jpg|jpeg|png|webp|gif|svg|bmp|heic|heif)$/i.test(file.name);
+      const isAudioFile = file.type.startsWith('audio/') || /\.(mp3|ogg|wav|m4a|aac|wma|opus)$/i.test(file.name);
+
+      const fileTypeCategory = isVideoFile 
+        ? 'video' 
+        : isImageFile 
+        ? 'image' 
+        : isAudioFile 
+        ? 'audio' 
         : 'doc';
 
-      try {
-        const base64Data = await readFileAsBase64(file);
+      const fileSizeMB = (file.size / (1024 * 1024)).toFixed(1);
+      const uploadToastId = isVideoFile
+        ? toast.loading(`Enviando vídeo "${file.name}" (${fileSizeMB}MB)...`)
+        : undefined;
 
-        // Upload to server endpoint
-        const res = await fetch('/api/upload', {
+      try {
+        // 1. Prioridade: Upload streaming via FormData (multipart/form-data)
+        // Evita carregar gigabytes de base64 na memória do navegador e no JSON
+        const formData = new FormData();
+        formData.append('file', file);
+
+        let fileUrl = '';
+        const res = await fetch('/api/upload-file', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: file.name,
-            type: file.type || 'application/octet-stream',
-            data: base64Data,
-          }),
+          body: formData,
         });
 
         if (!res.ok) {
@@ -227,21 +236,62 @@ export default function WhatsAppMessages() {
         }
 
         const data = await res.json();
-        const fileUrl = data.url || base64Data;
-        const isSmallImage = fileTypeCategory === 'image' && file.size <= 500 * 1024;
+        fileUrl = data.url;
+
+        let smallDataUrl: string | undefined = undefined;
+        if (isImageFile && file.size <= 500 * 1024) {
+          try {
+            smallDataUrl = await readFileAsBase64(file);
+          } catch {
+            // ignore
+          }
+        }
 
         newAttachments.push({
           name: file.name,
           url: fileUrl,
           type: fileTypeCategory,
           size: file.size,
-          ...(isSmallImage ? { dataUrl: base64Data } : {}),
+          ...(smallDataUrl ? { dataUrl: smallDataUrl } : {}),
         });
 
+        if (uploadToastId) toast.dismiss(uploadToastId);
         toast.success(`"${file.name}" adicionado com sucesso!`);
       } catch (err: any) {
-        console.warn('Falha no upload via servidor, testando fallback local:', err);
-        // Fallback for smaller files < 700KB: store inline dataUrl in Firestore
+        if (uploadToastId) toast.dismiss(uploadToastId);
+        console.warn('Falha no upload via multipart, testando fallback base64:', err);
+
+        // Fallback para arquivos menores que 20MB via base64
+        if (file.size <= 20 * 1024 * 1024) {
+          try {
+            const base64Data = await readFileAsBase64(file);
+            const res = await fetch('/api/upload', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                name: file.name,
+                type: file.type || 'application/octet-stream',
+                data: base64Data,
+              }),
+            });
+
+            if (res.ok) {
+              const data = await res.json();
+              newAttachments.push({
+                name: file.name,
+                url: data.url,
+                type: fileTypeCategory,
+                size: file.size,
+              });
+              toast.success(`"${file.name}" adicionado com sucesso!`);
+              continue;
+            }
+          } catch (innerErr) {
+            console.warn('Fallback base64 também falhou:', innerErr);
+          }
+        }
+
+        // Fallback local Firestore para pequenos arquivos < 700KB
         if (file.size < 700 * 1024) {
           try {
             const base64Data = await readFileAsBase64(file);
@@ -254,10 +304,11 @@ export default function WhatsAppMessages() {
             });
             toast.success(`"${file.name}" anexado localmente!`);
             continue;
-          } catch (innerErr) {
+          } catch {
             // ignore
           }
         }
+
         toast.error(`Falha ao subir ${file.name}: ` + (err.message || 'Erro ao processar arquivo'));
       }
     }
@@ -1003,6 +1054,10 @@ export default function WhatsAppMessages() {
                                   className="w-full h-full object-cover"
                                 />
                               </div>
+                            ) : att.type === 'video' || /\.(mp4|mov|m4v|webm|avi|mkv|3gp|wmv|flv|ts|ogv)$/i.test(att.name) ? (
+                              <div className="w-8 h-8 rounded bg-purple-100 border border-purple-200 shrink-0 flex items-center justify-center text-purple-700" title="Vídeo">
+                                <Video size={14} />
+                              </div>
                             ) : (
                               <div className="w-8 h-8 rounded bg-slate-100 border border-slate-200 shrink-0 flex items-center justify-center text-slate-500">
                                 <Paperclip size={14} />
@@ -1035,15 +1090,15 @@ export default function WhatsAppMessages() {
                   <label className="flex flex-col items-center justify-center py-3 px-2 cursor-pointer group">
                     <div className="flex items-center gap-2 text-slate-600 group-hover:text-emerald-700 font-bold text-xs">
                       <Plus size={16} className="text-emerald-600 group-hover:scale-110 transition-transform" />
-                      <span>Arraste ou clique para selecionar fotos, vídeos ou documentos</span>
+                      <span>Arraste ou clique para selecionar vídeos, fotos ou documentos</span>
                     </div>
                     <span className="text-[10px] text-slate-400 mt-0.5">
-                      Suporta imagens, vídeos, áudios, PDFs e planilhas (até 35MB por arquivo)
+                      Suporta vídeos (MP4, MOV, WebM, etc. até 150MB), fotos, áudios e documentos
                     </span>
                     <input
                       type="file"
                       multiple
-                      accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.txt"
+                      accept="image/*,video/*,audio/*,.mp4,.mov,.m4v,.webm,.avi,.mkv,.3gp,.wmv,.flv,.pdf,.doc,.docx,.xls,.xlsx,.txt"
                       onChange={handleFileUpload}
                       className="hidden"
                       disabled={isUploading}
@@ -1244,6 +1299,10 @@ export default function WhatsAppMessages() {
                                   className="w-full h-full object-cover"
                                 />
                               </div>
+                            ) : att.type === 'video' || /\.(mp4|mov|m4v|webm|avi|mkv|3gp|wmv|flv|ts|ogv)$/i.test(att.name) ? (
+                              <div className="w-8 h-8 rounded bg-purple-100 border border-purple-200 shrink-0 flex items-center justify-center text-purple-700" title="Vídeo">
+                                <Video size={14} />
+                              </div>
                             ) : (
                               <div className="w-8 h-8 rounded bg-slate-100 border border-slate-200 shrink-0 flex items-center justify-center text-slate-500">
                                 <Paperclip size={14} />
@@ -1276,15 +1335,15 @@ export default function WhatsAppMessages() {
                   <label className="flex flex-col items-center justify-center py-2.5 px-2 cursor-pointer group">
                     <div className="flex items-center gap-2 text-slate-600 group-hover:text-amber-700 font-bold text-xs">
                       <Plus size={16} className="text-amber-600 group-hover:scale-110 transition-transform" />
-                      <span>Arraste ou clique para adicionar mais arquivos</span>
+                      <span>Arraste ou clique para adicionar mais vídeos ou arquivos</span>
                     </div>
                     <span className="text-[10px] text-slate-400 mt-0.5">
-                      Fotos, vídeos, áudios, PDFs e planilhas (até 35MB)
+                      Vídeos (MP4, MOV, WebM até 150MB), fotos, áudios e documentos
                     </span>
                     <input
                       type="file"
                       multiple
-                      accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.txt"
+                      accept="image/*,video/*,audio/*,.mp4,.mov,.m4v,.webm,.avi,.mkv,.3gp,.wmv,.flv,.pdf,.doc,.docx,.xls,.xlsx,.txt"
                       onChange={async (e) => {
                         if (e.target.files) {
                           await processEditFiles(e.target.files);
@@ -1607,9 +1666,9 @@ export default function WhatsAppMessages() {
                   </span>
                   <div className="space-y-2">
                     {selectedMessage.attachments.map((att, idx) => {
-                      const isImage = att.type === 'image' || (att.name && /\.(jpg|jpeg|png|webp|gif|svg)$/i.test(att.name));
-                      const isVideo = att.type === 'video' || (att.name && /\.(mp4|webm|mov|m4v)$/i.test(att.name));
-                      const isAudio = att.type === 'audio' || (att.name && /\.(mp3|ogg|wav|m4a|aac)$/i.test(att.name));
+                      const isImage = att.type === 'image' || (att.name && /\.(jpg|jpeg|png|webp|gif|svg|bmp|heic|heif)$/i.test(att.name));
+                      const isVideo = att.type === 'video' || (att.name && /\.(mp4|webm|mov|m4v|avi|mkv|3gp|wmv|flv|ts|ogv)$/i.test(att.name));
+                      const isAudio = att.type === 'audio' || (att.name && /\.(mp3|ogg|wav|m4a|aac|wma|opus)$/i.test(att.name));
                       const previewUrl = att.dataUrl || att.url;
 
                       return (
@@ -1619,7 +1678,13 @@ export default function WhatsAppMessages() {
                         >
                           <div className="flex items-center justify-between">
                             <span className="flex items-center gap-2 truncate">
-                              <Paperclip size={13} className="text-emerald-600 shrink-0" />
+                              {isVideo ? (
+                                <Video size={14} className="text-purple-600 shrink-0" />
+                              ) : isImage ? (
+                                <Paperclip size={13} className="text-emerald-600 shrink-0" />
+                              ) : (
+                                <Paperclip size={13} className="text-slate-500 shrink-0" />
+                              )}
                               <span className="truncate">{att.name}</span>
                               {att.size && (
                                 <span className="text-[10px] text-slate-400 font-normal">
@@ -1651,11 +1716,15 @@ export default function WhatsAppMessages() {
                           )}
 
                           {isVideo && att.url && (
-                            <video
-                              src={att.url}
-                              controls
-                              className="max-h-48 w-full rounded border border-slate-200 bg-black mt-1"
-                            />
+                            <div className="mt-1 rounded-xl overflow-hidden border border-slate-300 bg-black shadow-xs">
+                              <video
+                                src={att.url}
+                                controls
+                                playsInline
+                                preload="metadata"
+                                className="max-h-60 w-full rounded-xl bg-black"
+                              />
+                            </div>
                           )}
 
                           {isAudio && previewUrl && (
