@@ -1,0 +1,6 @@
+{
+  "summary": "Plano detalhado para a implementação do Sistema de Lembretes Rápidos na Dashboard, incluindo prioridades (baixa, média, alta), escopo (pessoal vs. mural geral), fixação no topo, conclusão e exclusão em tempo real no Firestore.",
+  "updatedAt": "2026-10-16T15:47:29.899708906Z",
+  "requestFeedback": true,
+  "userFacing": true
+}

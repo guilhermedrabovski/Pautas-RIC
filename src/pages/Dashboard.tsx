@@ -1,32 +1,41 @@
 import React, { useEffect, useState } from 'react';
-import { collection, query, where, orderBy, limit, onSnapshot, getDocs, addDoc, updateDoc, doc, deleteDoc } from 'firebase/firestore';
+import { collection, query, where, orderBy, limit, onSnapshot, addDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
-import { isUserScaleOwner, getDisplayNames } from '../lib/userUtils';
-import { useAuth, UserData } from '../contexts/AuthContext';
-import { Link } from 'react-router-dom';
-import { Bell, CheckSquare, Calendar, ChevronRight, Check, ListTodo, Plus, Trash2, Film, Video, Timer, Flame, X, Sparkles } from 'lucide-react';
-import { format, parseISO } from 'date-fns';
+import { getDisplayNames } from '../lib/userUtils';
+import { useAuth } from '../contexts/AuthContext';
+import { Link, useNavigate } from 'react-router-dom';
+import { 
+  Bell, 
+  ChevronRight, 
+  Plus, 
+  Film, 
+  Timer, 
+  Flame, 
+  X, 
+  ClipboardList, 
+  MessageSquare, 
+  BookOpen, 
+  GraduationCap,
+  Calendar,
+  Sparkles,
+  CheckCircle2,
+  Clock,
+  Scale
+} from 'lucide-react';
+import { format } from 'date-fns';
+import { ptBR } from 'date-fns/locale';
 import toast from 'react-hot-toast';
-import { confirmAction } from '../lib/confirmHelper';
 import EditorWorkloadWidget from '../components/EditorWorkloadWidget';
+import QuickRemindersWidget from '../components/QuickRemindersWidget';
 import { IMAGE_EDITORS_LIST } from '../lib/constants';
 import { playSuccessChime } from '../lib/soundChime';
 import { notifyUrgentPautaPush } from '../lib/notifications';
 
 export default function Dashboard() {
   const { userData, users } = useAuth();
-  const [latestHandover, setLatestHandover] = useState<any>(null);
+  const navigate = useNavigate();
   const [unreadReminders, setUnreadReminders] = useState<any[]>([]);
-  const [myChecklistStats, setMyChecklistStats] = useState({ total: 0, checked: 0 });
-  const [checklistTemplate, setChecklistTemplate] = useState<string[]>([]);
-  const [checklistCompleted, setChecklistCompleted] = useState<string[]>([]);
-  
-  // Tasks state
-  const [myTasks, setMyTasks] = useState<any[]>([]);
-  const [allTasks, setAllTasks] = useState<any[]>([]);
-  const [myScaleToday, setMyScaleToday] = useState<any>(null);
-  const [pendingTrades, setPendingTrades] = useState<any[]>([]);
-  const [newTask, setNewTask] = useState({ title: '', type: 'Reportagem', time: '', assignedTo: '' });
+  const [recentAgendas, setRecentAgendas] = useState<any[]>([]);
   
   // Modal de Atribuir Pauta para Editor Livre
   const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
@@ -40,7 +49,9 @@ export default function Dashboard() {
   const [availableAgendas, setAvailableAgendas] = useState<any[]>([]);
 
   const today = format(new Date(), 'yyyy-MM-dd');
+  const todayFormatted = format(new Date(), "EEEE, dd 'de' MMMM", { locale: ptBR });
   const isManager = userData?.role === 'admin' || userData?.role === 'editor' || userData?.role === 'pauteiro' || userData?.role === 'pauteira';
+  const isIntern = userData?.role === 'estagiario';
   const displayNames = getDisplayNames(users);
 
   useEffect(() => {
@@ -50,75 +61,20 @@ export default function Dashboard() {
     const qReminders = query(collection(db, 'reminders'), where('toId', '==', userData.uid), where('read', '==', false));
     const unsubR = onSnapshot(qReminders, snap => {
       setUnreadReminders(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    });
+    }, err => console.warn('Dashboard reminders error:', err));
     
-    // Handovers (last 1)
-    const qHandover = query(collection(db, 'handovers'), orderBy('createdAt', 'desc'), limit(1));
-    const unsubH = onSnapshot(qHandover, snap => {
-      if (!snap.empty) {
-         setLatestHandover({ id: snap.docs[0].id, ...snap.docs[0].data() });
-      } else {
-         setLatestHandover(null);
-      }
-    });
-    
-    // Checklists stats
-    const unsubTpl = onSnapshot(doc(db, 'checklistTemplates', userData.uid), snap => {
-       const templateItems = snap.exists() ? snap.data().items || [] : ["Verificar emails", "Checar pautas pendentes", "Confirmar equipamentos"];
-       setChecklistTemplate(templateItems);
-       setMyChecklistStats(prev => ({ ...prev, total: templateItems.length }));
-    });
-    
-    const unsubRun = onSnapshot(doc(db, 'checklistRuns', `${userData.uid}_${today}`), snap => {
-       const completedItems = snap.exists() ? snap.data().completedItems || [] : [];
-       setChecklistCompleted(completedItems);
-       setMyChecklistStats(prev => ({ ...prev, checked: completedItems.length }));
-    });
-
-    // My Tasks
-    const qMyTasks = query(collection(db, 'tasks'), where('assignedTo', '==', userData.uid), where('date', '==', today));
-    const unsubT = onSnapshot(qMyTasks, snap => {
-       setMyTasks(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    });
-
-    let unsubAllT = () => {};
-    if (isManager) {
-      const qAllTasks = query(collection(db, 'tasks'), where('date', '==', today));
-      unsubAllT = onSnapshot(qAllTasks, snap => {
-         setAllTasks(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-      });
-    }
-
-    // My Scale Today
-    const qMyScale = query(collection(db, 'schedules'), where('date', '==', today));
-    const unsubScale = onSnapshot(qMyScale, snap => {
-      const myScale = snap.docs.find(d => isUserScaleOwner(d.data().reporterId, userData));
-      if (myScale) {
-        setMyScaleToday(myScale.data());
-      } else {
-        setMyScaleToday(null);
-      }
-    });
-
-    // Handle trade request notifications
-    const qTrades = query(collection(db, 'shiftTrades'), where('status', 'in', ['pending_target', 'pending_admin']));
-    const unsubTrades = onSnapshot(qTrades, snap => {
-      const allTrades = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      const relevantTrades = allTrades.filter((t: any) => {
-        if (t.status === 'pending_target' && t.targetUserId === userData.uid) return true;
-        if (t.status === 'pending_admin' && isManager) return true;
-        return false;
-      });
-      setPendingTrades(relevantTrades);
-    }, err => console.warn('Dashboard trades error:', err));
-
-    // Listen to agendas for selecting existing pautas
-    const qAgendas = query(collection(db, 'agendas'), orderBy('createdAt', 'desc'), limit(30));
+    // Recent Agendas (pautas)
+    const qAgendas = query(collection(db, 'agendas'), orderBy('createdAt', 'desc'), limit(15));
     const unsubAgendas = onSnapshot(qAgendas, snap => {
-      setAvailableAgendas(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      setRecentAgendas(list);
+      setAvailableAgendas(list);
     }, err => console.warn('Dashboard agendas error:', err));
 
-    return () => { unsubR(); unsubH(); unsubTpl(); unsubRun(); unsubT(); unsubAllT(); unsubScale(); unsubTrades(); unsubAgendas(); };
+    return () => { 
+      unsubR(); 
+      unsubAgendas(); 
+    };
   }, [userData, today, isManager]);
 
   const openAssignPautaModal = (editorId?: string) => {
@@ -192,77 +148,20 @@ export default function Dashboard() {
     return displayNames[u.uid] || u.name || u.email?.split('@')[0] || id;
   };
 
-  const handleCreateTask = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newTask.title || !newTask.assignedTo) return toast.error('Preencha título e destinatário');
-    try {
-      await addDoc(collection(db, 'tasks'), {
-        ...newTask,
-        status: 'pending',
-        date: today,
-        createdBy: userData?.uid,
-        createdAt: Date.now()
-      });
-      toast.success('Tarefa criada!');
-      setNewTask({ title: '', type: 'Reportagem', time: '', assignedTo: '' });
-    } catch (err: any) { 
-      toast.error('Erro ao criar tarefa: ' + err.message); 
-    }
-  };
-
-  const toggleTaskStatus = async (taskId: string, currentStatus: string) => {
-    try {
-      await updateDoc(doc(db, 'tasks', taskId), { status: currentStatus === 'pending' ? 'completed' : 'pending' });
-    } catch(err) {}
-  };
-
-  const toggleChecklistItem = async (item: string) => {
-    if (!userData) return;
-    const isCompleted = checklistCompleted.includes(item);
-    const updated = isCompleted ? checklistCompleted.filter(i => i !== item) : [...checklistCompleted, item];
-    
-    // Optimistic update
-    setChecklistCompleted(updated);
-    
-    // Firestore update
-    const runRefId = `${userData.uid}_${today}`;
-    await updateDoc(doc(db, 'checklistRuns', runRefId), {
-      userId: userData.uid,
-      date: today,
-      completedItems: updated,
-      updatedAt: Date.now()
-    }).catch(async (e) => {
-      // If document doesn't exist, set it
-      if (e.code === 'not-found') {
-        const { setDoc } = await import('firebase/firestore');
-        await setDoc(doc(db, 'checklistRuns', runRefId), {
-          userId: userData.uid,
-          date: today,
-          completedItems: updated,
-          updatedAt: Date.now()
-        });
-      }
-    });
-  };
-
-  const deleteTask = async (taskId: string) => {
-    confirmAction('Remover esta tarefa?', async () => {
-      try {
-        await deleteDoc(doc(db, 'tasks', taskId));
-        toast.success('Tarefa removida!');
-      } catch(err) {}
-    });
-  };
-
-  const checklistProgress = myChecklistStats.total > 0 ? Math.round((myChecklistStats.checked / myChecklistStats.total) * 100) : 0;
-
   return (
-     <div className="space-y-[15px]">
-        <div className="bg-white rounded-[8px] p-6 shadow-[0_1px_3px_rgba(0,0,0,0.1)] border border-ric-border flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-bold text-ric-text">Olá, {userData?.name ? userData.name.split(' ')[0] : (userData?.email ? userData.email.split('@')[0] : 'Colaborador')}!</h1>
-            <p className="text-[14px] text-ric-muted mt-1">Bem-vindo(a) ao Início do Painel Geral. Aqui está o seu resumo do plantão.</p>
-          </div>
+    <div className="space-y-[15px] pb-10">
+      {/* Top Welcome Bar */}
+      <div className="bg-white rounded-[8px] p-6 shadow-[0_1px_3px_rgba(0,0,0,0.1)] border border-ric-border flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-ric-text">
+            Olá, {userData?.name ? userData.name.split(' ')[0] : (userData?.email ? userData.email.split('@')[0] : 'Colaborador')}!
+          </h1>
+          <p className="text-[13px] text-ric-muted mt-1 capitalize flex items-center gap-1.5">
+            <Calendar size={13} className="text-gray-400" />
+            {todayFormatted} • Central de Produção e Edição
+          </p>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
           <button
             type="button"
             onClick={() => openAssignPautaModal()}
@@ -271,388 +170,406 @@ export default function Dashboard() {
             <Plus size={16} strokeWidth={3} /> Atribuir Pauta p/ Editor Livre
           </button>
         </div>
+      </div>
 
-        {/* STATUS DA ILHA DE EDIÇÃO (OCUPAÇÃO, PORCENTAGEM & ALERTA LIVRE) */}
-        <EditorWorkloadWidget 
-          showLinkToDashboard={true} 
-          onAssignClick={(editorId) => openAssignPautaModal(editorId)}
-        />
-
-        {/* SUAS TAREFAS DE HOJE */}
-        <div className="bg-white rounded-[8px] shadow-[0_1px_3px_rgba(0,0,0,0.1)] border border-ric-border overflow-hidden">
-          <div className="bg-ric-card px-4 py-3 border-b border-ric-border flex justify-between items-center border-t-[4px] border-t-ric-blue">
-            <h2 className="font-bold text-ric-text uppercase tracking-wider text-[14px] flex items-center"><ListTodo size={16} className="mr-2 text-ric-blue" /> Suas Tarefas de Hoje ({format(parseISO(today), 'dd/MM/yyyy')})</h2>
+      {/* Intern Friendly Notice (APENAS para quem é estagiário, ex: Pedro) */}
+      {isIntern && (
+        <div className="bg-gradient-to-r from-emerald-500 to-teal-600 text-white p-4 rounded-xl shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-white/20 rounded-lg">
+              <GraduationCap size={22} className="text-white" />
+            </div>
+            <div>
+              <p className="font-bold text-sm">Sua Rotina Diária de Estagiário</p>
+              <p className="text-xs text-white/90">
+                Cheque as páginas de notícias, grupos de WhatsApp e informe suas potenciais pautas.
+              </p>
+            </div>
           </div>
-          <div className="p-5">
-            {checklistTemplate.length > 0 && (
-               <div className="space-y-3 mb-6">
-                 {checklistTemplate.map((item, idx) => {
-                   const isCompleted = checklistCompleted.includes(item);
-                   return (
-                     <div key={`chk-${idx}`} className={`flex items-center justify-between p-3 rounded-[6px] border ${isCompleted ? 'bg-[#F0FDF4] border-[#86EFAC]' : 'bg-[#FEF2F2] border-[#FECACA]'} shadow-sm transition-colors`}>
-                       <div className="flex items-center gap-3 w-full">
-                       <button onClick={() => toggleChecklistItem(item)} className={`flex-shrink-0 w-10 h-10 rounded border-2 flex items-center justify-center transition-colors ${isCompleted ? 'bg-[#059669] border-[#059669] text-white' : 'border-[#EF4444] bg-white hover:bg-red-50 text-transparent'}`}>
-                           <Check size={20} />
-                         </button>
-                         <div className={`flex-1 ${isCompleted ? 'opacity-70 line-through' : ''}`}>
-                           <div className={`font-bold text-[14px] flex items-center gap-2 ${isCompleted ? 'text-[#065F46]' : 'text-[#B91C1C]'}`}>
-                             {item} <span className="text-[10px] bg-white/50 border border-black/10 px-2 py-0.5 rounded-full font-medium">Checklist</span>
-                           </div>
-                         </div>
-                       </div>
-                     </div>
-                   );
-                 })}
-               </div>
+          <Link
+            to="/checklist"
+            className="bg-white text-emerald-800 hover:bg-emerald-50 px-4 py-2 rounded-lg font-black text-xs uppercase shadow-sm shrink-0 transition-colors"
+          >
+            Abrir Checklist da Rotina
+          </Link>
+        </div>
+      )}
+
+      {/* LEMBRETES RÁPIDOS DA REDAÇÃO (Prioridades, Mural Geral / Pessoal, Fixação no Topo) */}
+      <QuickRemindersWidget />
+
+      {/* STATUS DA ILHA DE EDIÇÃO (OCUPAÇÃO, PORCENTAGEM & ALERTA LIVRE) */}
+      <EditorWorkloadWidget 
+        showLinkToDashboard={true} 
+        onAssignClick={(editorId) => openAssignPautaModal(editorId)}
+      />
+
+      {/* Quick Navigation Cards */}
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+        <Link
+          to="/agendas"
+          className="bg-white p-4 rounded-xl border border-ric-border shadow-xs hover:border-ric-blue hover:shadow-sm transition-all flex items-center gap-3 group"
+        >
+          <div className="w-10 h-10 rounded-lg bg-blue-50 text-ric-blue flex items-center justify-center shrink-0 group-hover:bg-ric-blue group-hover:text-white transition-colors">
+            <ClipboardList size={20} />
+          </div>
+          <div>
+            <span className="block font-bold text-xs text-ric-text group-hover:text-ric-blue">Pautas</span>
+            <span className="text-[11px] text-ric-muted">Gerenciar reportagens</span>
+          </div>
+        </Link>
+
+        <Link
+          to="/whatsapp"
+          className="bg-white p-4 rounded-xl border border-ric-border shadow-xs hover:border-emerald-600 hover:shadow-sm transition-all flex items-center gap-3 group"
+        >
+          <div className="w-10 h-10 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0 group-hover:bg-emerald-600 group-hover:text-white transition-colors">
+            <MessageSquare size={20} />
+          </div>
+          <div>
+            <span className="block font-bold text-xs text-ric-text group-hover:text-emerald-700">WhatsApp</span>
+            <span className="text-[11px] text-ric-muted">Sugestões de pauta</span>
+          </div>
+        </Link>
+
+        <Link
+          to="/editor-dashboard"
+          className="bg-white p-4 rounded-xl border border-ric-border shadow-xs hover:border-purple-600 hover:shadow-sm transition-all flex items-center gap-3 group"
+        >
+          <div className="w-10 h-10 rounded-lg bg-purple-50 text-purple-600 flex items-center justify-center shrink-0 group-hover:bg-purple-600 group-hover:text-white transition-colors">
+            <Film size={20} />
+          </div>
+          <div>
+            <span className="block font-bold text-xs text-ric-text group-hover:text-purple-700">Ilhas de Edição</span>
+            <span className="text-[11px] text-ric-muted">Fila & ilhas de vídeo</span>
+          </div>
+        </Link>
+
+        <Link
+          to="/processos"
+          className="bg-white p-4 rounded-xl border border-ric-border shadow-xs hover:border-amber-600 hover:shadow-sm transition-all flex items-center gap-3 group"
+        >
+          <div className="w-10 h-10 rounded-lg bg-amber-50 text-amber-700 flex items-center justify-center shrink-0 group-hover:bg-amber-600 group-hover:text-white transition-colors">
+            <Scale size={20} />
+          </div>
+          <div>
+            <span className="block font-bold text-xs text-ric-text group-hover:text-amber-700">Processos</span>
+            <span className="text-[11px] text-ric-muted">CNJ, varas & réus</span>
+          </div>
+        </Link>
+
+        <Link
+          to="/reminders"
+          className="bg-white p-4 rounded-xl border border-ric-border shadow-xs hover:border-amber-600 hover:shadow-sm transition-all flex items-center gap-3 group"
+        >
+          <div className="w-10 h-10 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center shrink-0 group-hover:bg-amber-600 group-hover:text-white transition-colors relative">
+            <Bell size={20} />
+            {unreadReminders.length > 0 && (
+              <span className="absolute -top-1 -right-1 w-4 h-4 bg-ric-red text-white text-[9px] font-black rounded-full flex items-center justify-center">
+                {unreadReminders.length}
+              </span>
             )}
-            
-            {myTasks.length > 0 ? (
-              <div className="space-y-3">
-                {myTasks.map(t => (
-                  <div key={t.id} className={`flex items-center justify-between p-3 rounded-[6px] border ${t.status === 'completed' ? 'bg-[#D1FAE5] border-[#059669]' : 'bg-[#FFEDD5] border-[#EA580C]'} shadow-sm transition-colors`}>
-                    <div className="flex items-center gap-3 w-full">
-                      <button onClick={() => toggleTaskStatus(t.id, t.status)} className={`flex-shrink-0 w-10 h-10 rounded-full border-2 flex items-center justify-center transition-colors ${t.status === 'completed' ? 'bg-[#059669] border-[#059669] text-white' : 'border-[#EA580C] bg-white hover:bg-orange-50 text-transparent'}`}>
-                        <Check size={20} />
-                      </button>
-                      <div className={`flex-1 ${t.status === 'completed' ? 'opacity-70 line-through' : ''}`}>
-                        <div className={`font-bold text-[14px] flex items-center gap-2 ${t.status === 'completed' ? 'text-[#065F46]' : 'text-[#9A3412]'}`}>
-                          {t.title} <span className="text-[10px] bg-white/50 border border-black/10 px-2 py-0.5 rounded-full font-medium">{t.type}</span>
-                        </div>
-                        {t.time && <div className={`text-[12px] mt-0.5 font-bold ${t.status === 'completed' ? 'text-[#065F46]/80' : 'text-[#9A3412]/80'}`}>Horário: {t.time}</div>}
+          </div>
+          <div>
+            <span className="block font-bold text-xs text-ric-text group-hover:text-amber-700">Lembretes</span>
+            <span className="text-[11px] text-ric-muted">
+              {unreadReminders.length > 0 ? `${unreadReminders.length} pendentes` : 'Em dia'}
+            </span>
+          </div>
+        </Link>
+      </div>
+
+      {/* Main Operational Hub: Pautas Recentes & Lembretes */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-[15px]">
+        {/* Pautas Recentes da Redação (2 Cols) */}
+        <div className="lg:col-span-2 bg-white rounded-[8px] shadow-[0_1px_3px_rgba(0,0,0,0.1)] border border-ric-border overflow-hidden flex flex-col">
+          <div className="bg-[#F8F9FA] px-4 py-3 border-b border-ric-border flex justify-between items-center border-t-[3px] border-t-ric-blue">
+            <div className="flex items-center gap-2">
+              <ClipboardList size={16} className="text-ric-blue" />
+              <h2 className="font-bold text-ric-text uppercase tracking-wider text-[13px]">
+                Pautas Recentes da Redação
+              </h2>
+            </div>
+            <Link 
+              to="/agendas" 
+              className="text-[12px] font-bold text-ric-blue hover:underline flex items-center"
+            >
+              Ver todas as pautas <ChevronRight size={14} />
+            </Link>
+          </div>
+
+          <div className="p-4 flex-1">
+            {recentAgendas.length > 0 ? (
+              <div className="divide-y divide-gray-100">
+                {recentAgendas.slice(0, 6).map((ag: any) => (
+                  <div key={ag.id} className="py-2.5 first:pt-0 last:pb-0 flex items-center justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded ${
+                          ag.journal === 'BG' ? 'bg-orange-100 text-orange-800' :
+                          ag.journal === 'Cidade Alerta' ? 'bg-red-100 text-red-800' :
+                          'bg-blue-100 text-blue-800'
+                        }`}>
+                          {ag.journal || 'Geral'}
+                        </span>
+                        <h4 className="font-bold text-[13px] text-ric-text truncate">
+                          {ag.title}
+                        </h4>
+                      </div>
+                      <div className="flex items-center gap-3 text-[11px] text-ric-muted mt-0.5">
+                        {ag.reporter && <span>Repórter: <strong>{ag.reporter}</strong></span>}
+                        {ag.time && <span>Horário: <strong>{ag.time}</strong></span>}
+                        {ag.status && (
+                          <span className={`capitalize ${ag.status === 'gravada' ? 'text-green-600 font-bold' : ''}`}>
+                            Status: {ag.status}
+                          </span>
+                        )}
                       </div>
                     </div>
+                    <Link
+                      to={`/agendas`}
+                      className="text-gray-400 hover:text-ric-blue p-1 rounded transition-colors shrink-0"
+                      title="Ver pauta"
+                    >
+                      <ChevronRight size={16} />
+                    </Link>
                   </div>
                 ))}
               </div>
             ) : (
-              <p className="text-[14px] text-ric-muted text-center py-4">Nenhuma tarefa atribuída a você para hoje.</p>
+              <div className="py-8 text-center text-ric-muted text-xs">
+                <ClipboardList size={24} className="mx-auto mb-2 text-gray-300" />
+                <p>Nenhuma pauta cadastrada recentemente.</p>
+              </div>
             )}
           </div>
-          
-          {isManager && (
-            <div className="bg-gray-50 border-t border-ric-border p-4">
-              <h3 className="text-[13px] font-bold text-ric-muted uppercase mb-3 flex items-center"><Plus size={14} className="mr-1"/> Atribuir Nova Tarefa</h3>
-              <form onSubmit={handleCreateTask} className="flex gap-3 flex-wrap md:flex-nowrap items-end">
-                <div className="w-full md:w-1/3">
-                   <label className="block text-[11px] font-bold uppercase text-ric-muted mb-1">Colaborador</label>
-                   <select value={newTask.assignedTo} onChange={e => setNewTask({...newTask, assignedTo: e.target.value})} className="block w-full rounded-[4px] border-ric-border shadow-sm p-2 text-[13px] bg-white">
-                      <option value="" disabled>Selecione...</option>
-                      {users.sort((a,b) => (a.name || '').localeCompare(b.name || '')).map(u => <option key={u.uid} value={u.uid}>{displayNames[u.uid] || u.name}</option>)}
-                   </select>
-                </div>
-                <div className="w-full md:w-1/4">
-                   <label className="block text-[11px] font-bold uppercase text-ric-muted mb-1">Assunto / Retranca</label>
-                   <input type="text" value={newTask.title} onChange={e => setNewTask({...newTask, title: e.target.value})} placeholder="Ex: Acidente BR" className="block w-full rounded-[4px] border-ric-border shadow-sm p-2 text-[13px] bg-white" />
-                </div>
-                <div className="w-full md:w-1/4">
-                   <label className="block text-[11px] font-bold uppercase text-ric-muted mb-1">Tipo</label>
-                   <select value={newTask.type} onChange={e => setNewTask({...newTask, type: e.target.value})} className="block w-full rounded-[4px] border-ric-border shadow-sm p-2 text-[13px] bg-white">
-                     <option>VT</option>
-                     <option>Mochilink</option>
-                     <option>VT + MOCHI</option>
-                     <option>Reportagem</option>
-                     <option>Externa / Produção</option>
-                     <option>Interna / Edição</option>
-                     <option>Outro</option>
-                   </select>
-                </div>
-                <div className="w-full md:w-1/6">
-                   <label className="block text-[11px] font-bold uppercase text-ric-muted mb-1">Horário (Opcional)</label>
-                   <input type="time" value={newTask.time} onChange={e => setNewTask({...newTask, time: e.target.value})} className="block w-full rounded-[4px] border-ric-border shadow-sm p-2 text-[13px] bg-white h-[38px] cursor-pointer" />
-                </div>
-                <button type="submit" className="w-full md:w-auto bg-ric-blue text-white px-4 py-2 rounded-[4px] text-[13px] font-bold hover:bg-[#002244] shrink-0">Criar Tarefa</button>
-              </form>
-
-              {allTasks.length > 0 && (
-                <div className="mt-6 border-t border-gray-200 pt-4">
-                  <h3 className="text-[13px] font-bold text-ric-muted uppercase mb-3">Visão Geral de Tarefas Distribuídas Hoje</h3>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {allTasks.map(t => (
-                      <div key={t.id} className={`border rounded-[6px] p-3 flex flex-col justify-between ${t.status === 'completed' ? 'bg-[#D1FAE5] border-[#059669]' : 'bg-[#FFEDD5] border-[#EA580C]'} shadow-sm transition-colors`}>
-                         <div className="flex justify-between items-start w-full">
-                            <div className="flex-1 mr-2">
-                               <div className={`text-[11px] font-black uppercase mb-1 ${t.status === 'completed' ? 'text-[#065F46]/70' : 'text-[#9A3412]'} flex items-center justify-between`}>
-                                 <select 
-                                   value={t.assignedTo} 
-                                   onChange={e => updateDoc(doc(db, 'tasks', t.id), { assignedTo: e.target.value })} 
-                                   className="bg-white/50 border border-black/10 rounded px-1 py-0.5 text-[10px] font-bold uppercase outline-none max-w-[120px]"
-                                 >
-                                    {users.sort((a,b) => (a.name || '').localeCompare(b.name || '')).map(u => <option key={u.uid} value={u.uid}>{displayNames[u.uid] || u.name}</option>)}
-                                 </select>
-                               </div>
-                               <div className={`font-bold text-[14px] leading-tight ${t.status === 'completed' ? 'text-[#065F46] line-through opacity-70' : 'text-[#9A3412]'}`}>{t.title}</div>
-                               <div className={`text-[11px] font-semibold mt-1 flex items-center gap-2 ${t.status === 'completed' ? 'text-[#065F46]/80' : 'text-[#9A3412]/80'}`}>
-                                 <span>{t.type}</span>
-                                 <input 
-                                   type="time" 
-                                   value={t.time || ''} 
-                                   onChange={e => updateDoc(doc(db, 'tasks', t.id), { time: e.target.value })} 
-                                   className="bg-white/50 border border-black/10 rounded px-1 outline-none text-[10px] uppercase cursor-pointer py-0.5"
-                                 />
-                               </div>
-                            </div>
-                            <div className="flex items-center gap-1">
-                               <button onClick={() => toggleTaskStatus(t.id, t.status)} title="Marcar status" className={`flex-shrink-0 w-10 h-10 rounded-full border-2 flex items-center justify-center transition-colors ${t.status === 'completed' ? 'bg-[#059669] border-[#059669] text-white' : 'border-[#EA580C] bg-white hover:bg-orange-50 text-transparent'}`}>
-                                  <Check size={20} />
-                               </button>
-                               <button onClick={() => deleteTask(t.id)} title="Excluir tarefa" className="text-black/30 hover:text-red-600 bg-white/50 hover:bg-white rounded p-1 transition-colors"><Trash2 size={14}/></button>
-                            </div>
-                         </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
         </div>
 
-
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-[15px]">
-            {/* Lembretes */}
-            <div className="bg-white rounded-[8px] shadow-[0_1px_3px_rgba(0,0,0,0.1)] border border-ric-border overflow-hidden flex flex-col">
-               <div className="bg-[#EFF6FF] px-4 py-3 border-b border-ric-border flex justify-between items-center">
-                 <h2 className="font-bold text-ric-blue uppercase tracking-wider text-[14px] flex items-center"><Bell size={16} className="mr-2" /> Lembretes Pendentes</h2>
-                 <Link to="/reminders" className="text-[12px] font-bold text-ric-blue hover:underline flex items-center">Abrir aba <ChevronRight size={14}/></Link>
-               </div>
-               <div className="p-4 flex-1">
-                 {unreadReminders.length > 0 ? (
-                    <div className="space-y-3">
-                       {unreadReminders.slice(0, 3).map(rem => (
-                          <div key={rem.id} className="bg-gray-50 border border-gray-200 rounded-[6px] p-3 shadow-sm text-[13px]">
-                             <p className="text-ric-text mb-1 font-medium">{rem.text}</p>
-                             <div className="flex justify-between text-[11px] text-ric-muted">
-                               <span>De: {getUserName(rem.fromId)}</span>
-                               <span>{rem.createdAt ? format(rem.createdAt, 'dd/MM/yyyy HH:mm') : ''}</span>
-                             </div>
-                          </div>
-                       ))}
-                       {unreadReminders.length > 3 && (
-                          <p className="text-[12px] text-center text-ric-muted mt-2 font-medium">+{unreadReminders.length - 3} lembretes ocultos...</p>
-                       )}
+        {/* Lembretes Pendentes (1 Col) */}
+        <div className="bg-white rounded-[8px] shadow-[0_1px_3px_rgba(0,0,0,0.1)] border border-ric-border overflow-hidden flex flex-col">
+          <div className="bg-[#EFF6FF] px-4 py-3 border-b border-ric-border flex justify-between items-center border-t-[3px] border-t-ric-blue">
+            <h2 className="font-bold text-ric-blue uppercase tracking-wider text-[13px] flex items-center">
+              <Bell size={15} className="mr-2" /> Lembretes Pendentes
+            </h2>
+            <Link to="/reminders" className="text-[12px] font-bold text-ric-blue hover:underline flex items-center">
+              Abrir <ChevronRight size={14}/>
+            </Link>
+          </div>
+          <div className="p-4 flex-1">
+            {unreadReminders.length > 0 ? (
+              <div className="space-y-2.5">
+                {unreadReminders.slice(0, 4).map(rem => (
+                  <div key={rem.id} className="bg-gray-50 border border-gray-200 rounded-[6px] p-2.5 text-[12px]">
+                    <p className="text-ric-text font-medium leading-snug">{rem.text}</p>
+                    <div className="flex justify-between text-[10px] text-ric-muted mt-1.5">
+                      <span>De: <strong>{getUserName(rem.fromId)}</strong></span>
+                      <span>{rem.createdAt ? format(rem.createdAt, 'HH:mm') : ''}</span>
                     </div>
-                 ) : (
-                    <p className="text-[13px] text-ric-muted text-center py-4">Nenhum lembrete pendente.</p>
-                 )}
-               </div>
-            </div>
-
-            {/* Checklist Shortcut */}
-            <div className="bg-white rounded-[8px] shadow-[0_1px_3px_rgba(0,0,0,0.1)] border border-ric-border overflow-hidden flex flex-col">
-               <div className="bg-[#FEF2F2] px-4 py-3 border-b border-ric-border flex justify-between items-center">
-                 <h2 className="font-bold text-ric-red uppercase tracking-wider text-[14px] flex items-center"><CheckSquare size={16} className="mr-2" /> Checklist Diário</h2>
-               </div>
-               <div className="p-6 flex-1 flex flex-col justify-center items-center text-center">
-                  <div className="relative mb-4">
-                     <div className="w-20 h-20 rounded-full border-4 border-gray-100 flex items-center justify-center">
-                        <span className="text-xl font-bold text-ric-text">{checklistProgress}%</span>
-                     </div>
-                     <div className="absolute inset-0">
-                        <svg className="w-20 h-20 transform -rotate-90">
-                           <circle cx="40" cy="40" r="38" stroke="currentColor" strokeWidth="4" fill="transparent"
-                                   className="text-ric-red opacity-100"
-                                   strokeDasharray={238.76}
-                                   strokeDashoffset={238.76 - (238.76 * checklistProgress) / 100}
-                                   strokeLinecap="round" />
-                        </svg>
-                     </div>
                   </div>
-                  
-                  <p className="text-[14px] text-ric-text mb-4">
-                    Você completou {myChecklistStats.checked} de {myChecklistStats.total} tarefas essenciais hoje.
-                  </p>
-                  <Link to="/checklist" className="bg-ric-red text-white font-bold py-2 px-6 rounded-[4px] uppercase text-[12px] hover:bg-[#CC0000] transition-colors">
-                    Acessar e Marcar Checklist
+                ))}
+                {unreadReminders.length > 4 && (
+                  <Link 
+                    to="/reminders"
+                    className="block text-[11px] text-center text-ric-blue hover:underline font-bold mt-2"
+                  >
+                    +{unreadReminders.length - 4} lembretes pendentes na lista...
                   </Link>
-               </div>
-            </div>
+                )}
+              </div>
+            ) : (
+              <div className="py-8 text-center text-ric-muted text-xs">
+                <CheckCircle2 size={24} className="mx-auto mb-2 text-emerald-400" />
+                <p className="font-bold text-gray-700">Tudo em dia!</p>
+                <p className="text-[11px] text-gray-400 mt-0.5">Nenhum lembrete pendente para você.</p>
+              </div>
+            )}
+          </div>
         </div>
+      </div>
 
-        {/* MODAL DE ATRIBUIR PAUTA PARA EDITOR LIVRE */}
-        {isAssignModalOpen && (
-          <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
-            <div className="bg-white w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden animate-in slide-in-from-bottom-4">
-              <div className="bg-emerald-700 text-white p-5 flex justify-between items-center">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center font-bold">
-                    <Film size={20} />
-                  </div>
+      {/* MODAL DE ATRIBUIR PAUTA PARA EDITOR LIVRE */}
+      {isAssignModalOpen && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
+          <div className="bg-white w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden animate-in slide-in-from-bottom-4">
+            <div className="bg-emerald-700 text-white p-5 flex justify-between items-center">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center font-bold">
+                  <Film size={20} />
+                </div>
+                <div>
+                  <h3 className="font-black uppercase text-sm tracking-tight">Atribuir Pauta p/ Editor Livre</h3>
+                  <p className="text-[10px] text-emerald-200 font-bold uppercase tracking-wider">
+                    Ilhas de Edição • Grupo RIC
+                  </p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setIsAssignModalOpen(false)} 
+                className="p-1 hover:bg-white/10 rounded-full cursor-pointer text-white/80 hover:text-white"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <form onSubmit={handleAssignPautaSubmit} className="p-6 space-y-4 max-h-[80vh] overflow-y-auto">
+              {/* Urgent toggle */}
+              <div className="p-3 bg-red-50 border border-red-200 rounded-xl flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Flame className="text-red-600 animate-pulse" size={18} />
                   <div>
-                    <h3 className="font-black uppercase text-sm tracking-tight">Atribuir Pauta p/ Editor Livre</h3>
-                    <p className="text-[10px] text-emerald-200 font-bold uppercase tracking-wider">
-                      Ilhas de Edição • Grupo RIC
-                    </p>
+                    <span className="text-xs font-black uppercase text-red-900 block">🚨 URGENTE / PRIORIDADE MÁXIMA</span>
+                    <span className="text-[10px] text-red-700">Notifica o editor com alerta prioritário</span>
                   </div>
                 </div>
-                <button 
-                  onClick={() => setIsAssignModalOpen(false)} 
-                  className="p-1 hover:bg-white/10 rounded-full cursor-pointer text-white/80 hover:text-white"
-                >
-                  <X size={20} />
-                </button>
+                <input 
+                  type="checkbox"
+                  checked={assignIsUrgent}
+                  onChange={e => setAssignIsUrgent(e.target.checked)}
+                  className="w-5 h-5 accent-red-600 rounded cursor-pointer"
+                />
               </div>
 
-              <form onSubmit={handleAssignPautaSubmit} className="p-6 space-y-4 max-h-[80vh] overflow-y-auto">
-                {/* Urgent toggle */}
-                <div className="p-3 bg-red-50 border border-red-200 rounded-xl flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Flame className="text-red-600 animate-pulse" size={18} />
-                    <div>
-                      <span className="text-xs font-black uppercase text-red-900 block">🚨 URGENTE / PRIORIDADE MÁXIMA</span>
-                      <span className="text-[10px] text-red-700">Notifica o editor com alerta prioritário</span>
-                    </div>
-                  </div>
-                  <input 
-                    type="checkbox"
-                    checked={assignIsUrgent}
-                    onChange={e => setAssignIsUrgent(e.target.checked)}
-                    className="w-5 h-5 accent-red-600 rounded cursor-pointer"
-                  />
-                </div>
+              {/* Editor Selection */}
+              <div>
+                <label className="block text-[10px] font-black uppercase tracking-wider text-ric-muted mb-1">
+                  Editor de Imagem Destinatário <span className="text-red-500">*</span>
+                </label>
+                <select
+                  value={assignEditorId}
+                  onChange={e => setAssignEditorId(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-bold focus:bg-white focus:ring-2 focus:ring-emerald-600 outline-none cursor-pointer"
+                  required
+                >
+                  {IMAGE_EDITORS_LIST.map(e => (
+                    <option key={e.uid} value={e.uid}>
+                      {e.name} (Editor de Imagem)
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-                {/* Editor Selection */}
+              {/* Optional: Pick from existing agendas */}
+              {availableAgendas.length > 0 && (
                 <div>
                   <label className="block text-[10px] font-black uppercase tracking-wider text-ric-muted mb-1">
-                    Editor de Imagem Destinatário <span className="text-red-500">*</span>
+                    Ou Selecione uma Pauta Existente Cadastrada:
                   </label>
                   <select
-                    value={assignEditorId}
-                    onChange={e => setAssignEditorId(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-bold focus:bg-white focus:ring-2 focus:ring-emerald-600 outline-none cursor-pointer"
-                    required
+                    onChange={e => handleSelectExistingAgenda(e.target.value)}
+                    defaultValue=""
+                    className="w-full bg-blue-50/60 border border-blue-200 rounded-xl p-2.5 text-xs font-bold text-slate-800 focus:bg-white focus:ring-2 focus:ring-ric-blue outline-none cursor-pointer"
                   >
-                    {IMAGE_EDITORS_LIST.map(e => (
-                      <option key={e.uid} value={e.uid}>
-                        {e.name} (Editor de Imagem)
+                    <option value="">-- Digitar manualmente ou escolher pauta... --</option>
+                    {availableAgendas.map(ag => (
+                      <option key={ag.id} value={ag.id}>
+                        [{ag.journal || 'BG'}] {ag.title} {ag.reporter ? `(${ag.reporter})` : ''}
                       </option>
                     ))}
                   </select>
                 </div>
+              )}
 
-                {/* Optional: Pick from existing agendas */}
-                {availableAgendas.length > 0 && (
-                  <div>
-                    <label className="block text-[10px] font-black uppercase tracking-wider text-ric-muted mb-1">
-                      Ou Selecione uma Pauta Existente Cadastrada:
-                    </label>
-                    <select
-                      onChange={e => handleSelectExistingAgenda(e.target.value)}
-                      defaultValue=""
-                      className="w-full bg-blue-50/60 border border-blue-200 rounded-xl p-2.5 text-xs font-bold text-slate-800 focus:bg-white focus:ring-2 focus:ring-ric-blue outline-none cursor-pointer"
-                    >
-                      <option value="">-- Digitar manualmente ou escolher pauta... --</option>
-                      {availableAgendas.map(ag => (
-                        <option key={ag.id} value={ag.id}>
-                          [{ag.journal || 'BG'}] {ag.title} {ag.reporter ? `(${ag.reporter})` : ''}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                )}
+              {/* Title / Retranca */}
+              <div>
+                <label className="block text-[10px] font-black uppercase tracking-wider text-ric-muted mb-1">
+                  Retranca / Assunto da Pauta <span className="text-red-500">*</span>
+                </label>
+                <input 
+                  type="text" 
+                  value={assignTitle}
+                  onChange={e => setAssignTitle(e.target.value.toUpperCase())}
+                  placeholder="EX: ACIDENTE BR 277 OU CASO VACINACAO"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-black uppercase tracking-wide focus:bg-white focus:ring-2 focus:ring-emerald-600 outline-none"
+                  required
+                />
+              </div>
 
-                {/* Title / Retranca */}
+              {/* Journal & Format */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[10px] font-black uppercase tracking-wider text-ric-muted mb-1">
-                    Retranca / Assunto da Pauta <span className="text-red-500">*</span>
+                    Jornal de Exibição
                   </label>
+                  <select 
+                    value={assignJournal}
+                    onChange={e => setAssignJournal(e.target.value as any)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-bold focus:bg-white focus:ring-2 focus:ring-emerald-600 outline-none cursor-pointer"
+                  >
+                    <option value="BG">Balanço Geral (BG)</option>
+                    <option value="Cidade Alerta">Cidade Alerta (CA)</option>
+                    <option value="Geral">Geral / Ambos</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-black uppercase tracking-wider text-ric-muted mb-1">
+                    Formato do Material
+                  </label>
+                  <select 
+                    value={assignFormat}
+                    onChange={e => setAssignFormat(e.target.value as any)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-bold focus:bg-white focus:ring-2 focus:ring-emerald-600 outline-none cursor-pointer"
+                  >
+                    <option value="VT">VT Completo (com OFF)</option>
+                    <option value="Sonora">Sonora / Entrevista</option>
+                    <option value="Compacto">Compacto de Imagens</option>
+                    <option value="Ao Vivo">Cobertura Ao Vivo</option>
+                    <option value="Bruto">Bruto Decupado</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Deadline */}
+              <div>
+                <label className="block text-[10px] font-black uppercase tracking-wider text-ric-muted mb-1">
+                  Horário Limite (Deadline)
+                </label>
+                <div className="relative">
+                  <Timer size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                   <input 
                     type="text" 
-                    value={assignTitle}
-                    onChange={e => setAssignTitle(e.target.value.toUpperCase())}
-                    placeholder="EX: ACIDENTE BR 277 OU CASO VACINACAO"
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-black uppercase tracking-wide focus:bg-white focus:ring-2 focus:ring-emerald-600 outline-none"
-                    required
+                    value={assignDeadline}
+                    onChange={e => setAssignDeadline(e.target.value)}
+                    placeholder="Ex: 11:45 ou 12:20"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-3 py-2.5 text-xs font-bold focus:bg-white focus:ring-2 focus:ring-emerald-600 outline-none"
                   />
                 </div>
+              </div>
 
-                {/* Journal & Format */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-[10px] font-black uppercase tracking-wider text-ric-muted mb-1">
-                      Jornal de Exibição
-                    </label>
-                    <select 
-                      value={assignJournal}
-                      onChange={e => setAssignJournal(e.target.value as any)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-bold focus:bg-white focus:ring-2 focus:ring-emerald-600 outline-none cursor-pointer"
-                    >
-                      <option value="BG">Balanço Geral (BG)</option>
-                      <option value="Cidade Alerta">Cidade Alerta (CA)</option>
-                      <option value="Geral">Geral / Ambos</option>
-                    </select>
-                  </div>
+              {/* Description */}
+              <div>
+                <label className="block text-[10px] font-black uppercase tracking-wider text-ric-muted mb-1">
+                  Orientações para o Editor
+                </label>
+                <textarea 
+                  rows={3}
+                  value={assignDescription}
+                  onChange={e => setAssignDescription(e.target.value)}
+                  placeholder="Ex: Pegar sonoras do delegado no cartão 2, destacar o momento da batida..."
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs focus:bg-white focus:ring-2 focus:ring-emerald-600 outline-none leading-relaxed"
+                />
+              </div>
 
-                  <div>
-                    <label className="block text-[10px] font-black uppercase tracking-wider text-ric-muted mb-1">
-                      Formato do Material
-                    </label>
-                    <select 
-                      value={assignFormat}
-                      onChange={e => setAssignFormat(e.target.value as any)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-bold focus:bg-white focus:ring-2 focus:ring-emerald-600 outline-none cursor-pointer"
-                    >
-                      <option value="VT">VT Completo (com OFF)</option>
-                      <option value="Sonora">Sonora / Entrevista</option>
-                      <option value="Compacto">Compacto de Imagens</option>
-                      <option value="Ao Vivo">Cobertura Ao Vivo</option>
-                      <option value="Bruto">Bruto Decupado</option>
-                    </select>
-                  </div>
-                </div>
-
-                {/* Deadline */}
-                <div>
-                  <label className="block text-[10px] font-black uppercase tracking-wider text-ric-muted mb-1">
-                    Horário Limite (Deadline)
-                  </label>
-                  <div className="relative">
-                    <Timer size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                    <input 
-                      type="text" 
-                      value={assignDeadline}
-                      onChange={e => setAssignDeadline(e.target.value)}
-                      placeholder="Ex: 11:45 ou 12:20"
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-3 py-2.5 text-xs font-bold focus:bg-white focus:ring-2 focus:ring-emerald-600 outline-none"
-                    />
-                  </div>
-                </div>
-
-                {/* Description */}
-                <div>
-                  <label className="block text-[10px] font-black uppercase tracking-wider text-ric-muted mb-1">
-                    Orientações para o Editor
-                  </label>
-                  <textarea 
-                    rows={3}
-                    value={assignDescription}
-                    onChange={e => setAssignDescription(e.target.value)}
-                    placeholder="Ex: Pegar sonoras do delegado no cartão 2, destacar o momento da batida..."
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs focus:bg-white focus:ring-2 focus:ring-emerald-600 outline-none leading-relaxed"
-                  />
-                </div>
-
-                {/* Buttons */}
-                <div className="flex gap-3 pt-2">
-                  <button
-                    type="button"
-                    onClick={() => setIsAssignModalOpen(false)}
-                    className="flex-1 py-2.5 border border-slate-200 text-slate-600 rounded-xl text-xs font-black uppercase hover:bg-slate-50 cursor-pointer"
-                  >
-                    Cancelar
-                  </button>
-                  <button
-                    type="submit"
-                    className="flex-[2] bg-emerald-600 hover:bg-emerald-700 text-white py-2.5 rounded-xl text-xs font-black uppercase shadow-md transition-all active:scale-95 cursor-pointer flex items-center justify-center gap-1.5"
-                  >
-                    <Plus size={15} strokeWidth={3} /> Atribuir & Notificar Editor
-                  </button>
-                </div>
-              </form>
-            </div>
+              {/* Buttons */}
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsAssignModalOpen(false)}
+                  className="flex-1 py-2.5 border border-slate-200 text-slate-600 rounded-xl text-xs font-black uppercase hover:bg-slate-50 cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="flex-[2] bg-emerald-600 hover:bg-emerald-700 text-white py-2.5 rounded-xl text-xs font-black uppercase shadow-md transition-all active:scale-95 cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  <Plus size={15} strokeWidth={3} /> Atribuir & Notificar Editor
+                </button>
+              </div>
+            </form>
           </div>
-        )}
-
-     </div>
+        </div>
+      )}
+    </div>
   );
 }

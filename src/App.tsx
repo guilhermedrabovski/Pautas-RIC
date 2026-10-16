@@ -8,11 +8,11 @@ import Agendas from './pages/Agendas';
 import MyDashboard from './pages/MyDashboard';
 import Reminders from './pages/Reminders';
 import Scales from './pages/Scales';
-import Handovers from './pages/Handovers';
 import Checklist from './pages/Checklist';
 import Settings from './pages/Settings';
 import Lineup from './pages/Lineup';
 import Stories from './pages/Stories';
+import LegalProcesses from './pages/LegalProcesses';
 import WhatsAppMessages from './pages/WhatsAppMessages';
 import EditorDashboard from './pages/EditorDashboard';
 
@@ -44,8 +44,9 @@ export default function App() {
           <Route path="/reminders" element={<Reminders />} />
           <Route path="/scales" element={<Scales />} />
           <Route path="/stories" element={<Stories />} />
+          <Route path="/processos" element={<LegalProcesses />} />
           <Route path="/lineup" element={<Lineup />} />
-          <Route path="/handovers" element={<Handovers />} />
+          <Route path="/handovers" element={<Navigate to="/dashboard" replace />} />
           <Route path="/checklist" element={<Checklist />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />

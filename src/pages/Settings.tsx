@@ -5,61 +5,55 @@ import { UserData, useAuth } from '../contexts/AuthContext';
 import { getDisplayNames } from '../lib/userUtils';
 import { createUserWithEmailAndPassword, signOut, updatePassword } from 'firebase/auth';
 import toast from 'react-hot-toast';
-import { Trash2, Plus, Save, UserPlus, Users as UsersIcon, Lock, ShieldCheck, Bell, Send } from 'lucide-react';
+import { Trash2, Plus, Save, UserPlus, Users as UsersIcon, Lock, ShieldCheck, Bell, Send, ArrowUp, ArrowDown, Edit3, CheckSquare, GraduationCap, RotateCcw, AlignLeft, Hash, Check } from 'lucide-react';
 import { confirmAction } from '../lib/confirmHelper';
 import { sendPushNotification } from '../lib/notifications';
 import { requestNotificationPermission } from '../components/NotificationHandler';
+import { InternRoutineItem, RoutineResponseType, DEFAULT_INTERN_ROUTINE_ITEMS } from '../types/internRoutine';
 
 export default function Settings() {
   const { userData } = useAuth();
-  const [items, setItems] = useState<any[]>([]);
   const [users, setUsers] = useState<UserData[]>([]);
   
-  const [lineupTimes, setLineupTimes] = useState<any[]>([]);
-
   // New User Form State
   const [newUserName, setNewUserName] = useState('');
   const [newUserUsername, setNewUserUsername] = useState('');
   const [newUserPassword, setNewUserPassword] = useState('');
-  const [newUserRole, setNewUserRole] = useState<'reporter' | 'pauteiro' | 'pauteira' | 'editor' | 'admin' | 'cinegrafista'>('reporter');
+  const [newUserRole, setNewUserRole] = useState<'reporter' | 'pauteiro' | 'pauteira' | 'editor' | 'admin' | 'cinegrafista' | 'estagiario'>('reporter');
   const [isCreatingUser, setIsCreatingUser] = useState(false);
+
+  // Intern Routine Configuration State
+  const [internRoutineItems, setInternRoutineItems] = useState<InternRoutineItem[]>([]);
+  const [isSavingRoutine, setIsSavingRoutine] = useState(false);
+  const [isRoutineModalOpen, setIsRoutineModalOpen] = useState(false);
+  const [editingRoutineId, setEditingRoutineId] = useState<string | null>(null);
+  const [routineFormTitle, setRoutineFormTitle] = useState('');
+  const [routineFormDesc, setRoutineFormDesc] = useState('');
+  const [routineFormType, setRoutineFormType] = useState<RoutineResponseType>('text');
+  const [routineFormPlaceholder, setRoutineFormPlaceholder] = useState('');
 
   // Security State
   const [newPassword, setNewPassword] = useState('');
   const [confirmNewPassword, setConfirmNewPassword] = useState('');
   const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
 
-  const EQUIPMENT_OPTIONS = ['Mochilink', 'Kit celular', 'Drone', 'Lapela', 'Estabilizador', 'Carro descaracterizado'];
-  const NEWSCAST_OPTIONS = ['RN', 'RNM', 'BG', 'CA', 'Factual'];
-
   useEffect(() => {
     fetchUsers();
-    
-    getDoc(doc(db, 'settings', 'defaultScale')).then(snap => {
-      if (snap.exists() && snap.data().items) {
-        setItems(snap.data().items);
-      } else {
-        setItems([
-          { id: '1', shift: 'Manhã', time: '07:00 - 16:00', reporterId: '', cinegrafistaId: '' },
-          { id: '2', shift: 'Tarde', time: '13:00 - 22:00', reporterId: '', cinegrafistaId: '' },
-          { id: '3', shift: 'Noite', time: '16:00 - 01:00', reporterId: '', cinegrafistaId: '' },
-        ]);
-      }
-    });
 
-    getDoc(doc(db, 'settings', 'defaultLineup')).then(snap => {
-      if (snap.exists() && snap.data().times) {
-        const rawTimes = snap.data().times;
-        const unique = Array.from(new Set(rawTimes.map((t: any) => t.time)));
-        const final = unique.map((time, i) => ({ id: i.toString(), time: time as string })).sort((a,b) => a.time.localeCompare(b.time));
-        setLineupTimes(final);
+    // Fetch Intern Routine Checklist Template
+    getDoc(doc(db, 'settings', 'internRoutineTemplate')).then(snap => {
+      if (snap.exists() && snap.data().items && snap.data().items.length > 0) {
+        setInternRoutineItems(snap.data().items);
       } else {
-        setLineupTimes([
-          { id: '1', time: '11:30' },
-          { id: '2', time: '12:00' },
-          { id: '3', time: '12:20' },
-        ]);
+        setInternRoutineItems(DEFAULT_INTERN_ROUTINE_ITEMS);
+        setDoc(doc(db, 'settings', 'internRoutineTemplate'), {
+          items: DEFAULT_INTERN_ROUTINE_ITEMS,
+          updatedAt: Date.now()
+        }, { merge: true });
       }
+    }).catch(err => {
+      console.warn("Could not load intern routine template, using defaults:", err);
+      setInternRoutineItems(DEFAULT_INTERN_ROUTINE_ITEMS);
     });
   }, []);
 
@@ -71,33 +65,114 @@ export default function Settings() {
 
   const reporters = users.filter(u => u.role === 'reporter');
   const cinegrafistas = users.filter(u => u.role === 'cinegrafista');
+  const estagiarios = users.filter(u => u.role === 'estagiario');
   const displayNames = getDisplayNames(users);
 
-  const handleAddItem = () => {
-    setItems([...items, { id: Date.now().toString(), shift: 'Manhã', time: '', reporterId: '', cinegrafistaId: '', equipments: [], newscasts: [], observation: '' }]);
-  };
-
-  const handleUpdateItem = (id: string, field: string, value: any) => {
-    setItems(items.map(item => item.id === id ? { ...item, [field]: value } : item));
-  };
-
-  const handleRemoveItem = (id: string) => {
-    setItems(items.filter(item => item.id !== id));
-  };
-
-  const handleSave = async () => {
+  // --- Handlers for Intern Routine Checklist Configuration ---
+  const handleSaveRoutineConfig = async (customItems?: InternRoutineItem[]) => {
+    const listToSave = customItems || internRoutineItems;
+    setIsSavingRoutine(true);
     try {
-      await setDoc(doc(db, 'settings', 'defaultScale'), { items, updatedAt: Date.now() });
-      await setDoc(doc(db, 'settings', 'defaultLineup'), { times: lineupTimes, updatedAt: Date.now() });
-      toast.success('Configurações salvas!');
-    } catch (error: any) {
-      toast.error(error.message);
+      await setDoc(doc(db, 'settings', 'internRoutineTemplate'), {
+        items: listToSave,
+        updatedAt: Date.now(),
+        updatedBy: userData?.name || userData?.email || 'admin'
+      });
+      // Also mirror to checklistTemplates/intern_routine_default for easy access
+      await setDoc(doc(db, 'checklistTemplates', 'intern_routine_default'), {
+        items: listToSave,
+        updatedAt: Date.now()
+      }, { merge: true });
+      toast.success('Configuração da Rotina do Estagiário salva com sucesso!');
+    } catch (err: any) {
+      toast.error('Erro ao salvar rotina: ' + err.message);
+    } finally {
+      setIsSavingRoutine(false);
     }
   };
 
-  const handleAddLineupTime = () => setLineupTimes([...lineupTimes, { id: Date.now().toString(), time: '' }]);
-  const handleUpdateLineupTime = (id: string, time: string) => setLineupTimes(lineupTimes.map(t => t.id === id ? { ...t, time } : t));
-  const handleRemoveLineupTime = (id: string) => setLineupTimes(lineupTimes.filter(t => t.id !== id));
+  const handleOpenAddRoutineItem = () => {
+    setEditingRoutineId(null);
+    setRoutineFormTitle('');
+    setRoutineFormDesc('');
+    setRoutineFormType('text');
+    setRoutineFormPlaceholder('');
+    setIsRoutineModalOpen(true);
+  };
+
+  const handleOpenEditRoutineItem = (item: InternRoutineItem) => {
+    setEditingRoutineId(item.id);
+    setRoutineFormTitle(item.title);
+    setRoutineFormDesc(item.description || '');
+    setRoutineFormType(item.responseType);
+    setRoutineFormPlaceholder(item.responsePlaceholder || '');
+    setIsRoutineModalOpen(true);
+  };
+
+  const handleSaveRoutineModal = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!routineFormTitle.trim()) {
+      return toast.error('O título do item de rotina é obrigatório!');
+    }
+
+    let updated: InternRoutineItem[];
+    if (editingRoutineId) {
+      updated = internRoutineItems.map(item => {
+        if (item.id === editingRoutineId) {
+          return {
+            ...item,
+            title: routineFormTitle.trim(),
+            description: routineFormDesc.trim() || undefined,
+            responseType: routineFormType,
+            responsePlaceholder: routineFormPlaceholder.trim() || undefined
+          };
+        }
+        return item;
+      });
+    } else {
+      const newItem: InternRoutineItem = {
+        id: `routine_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        title: routineFormTitle.trim(),
+        description: routineFormDesc.trim() || undefined,
+        responseType: routineFormType,
+        responsePlaceholder: routineFormPlaceholder.trim() || undefined
+      };
+      updated = [...internRoutineItems, newItem];
+    }
+
+    setInternRoutineItems(updated);
+    setIsRoutineModalOpen(false);
+    await handleSaveRoutineConfig(updated);
+  };
+
+  const handleRemoveRoutineItem = (id: string) => {
+    const item = internRoutineItems.find(i => i.id === id);
+    confirmAction(`Deseja remover o item "${item?.title || 'este item'}" da rotina dos estagiários?`, async () => {
+      const updated = internRoutineItems.filter(i => i.id !== id);
+      setInternRoutineItems(updated);
+      await handleSaveRoutineConfig(updated);
+    });
+  };
+
+  const handleMoveRoutineItem = async (index: number, direction: 'up' | 'down') => {
+    if (direction === 'up' && index === 0) return;
+    if (direction === 'down' && index === internRoutineItems.length - 1) return;
+    
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    const newItems = [...internRoutineItems];
+    const [moved] = newItems.splice(index, 1);
+    newItems.splice(targetIndex, 0, moved);
+    
+    setInternRoutineItems(newItems);
+    await handleSaveRoutineConfig(newItems);
+  };
+
+  const handleResetRoutineDefaults = () => {
+    confirmAction('Deseja restaurar os itens padrões recomendados para a rotina do estagiário?', async () => {
+      setInternRoutineItems(DEFAULT_INTERN_ROUTINE_ITEMS);
+      await handleSaveRoutineConfig(DEFAULT_INTERN_ROUTINE_ITEMS);
+    });
+  };
 
   const handleToggleStatus = async (user: UserData) => {
     try {
@@ -402,94 +477,144 @@ export default function Settings() {
         )}
       </div>
 
-      <datalist id="shift-options">
-        <option value="Manhã" />
-        <option value="Tarde" />
-        <option value="Noite" />
-        <option value="Madrugada" />
-        <option value="Plantão" />
-      </datalist>
-
-      <datalist id="reporter-options">
-        {reporters.map(r => <option key={r.uid} value={displayNames[r.uid] || r.name} />)}
-      </datalist>
-
-      <datalist id="cinegrafista-options">
-        {cinegrafistas.map(r => <option key={r.uid} value={displayNames[r.uid] || r.name} />)}
-      </datalist>
-
       {userData?.role === 'admin' && (
         <div className="bg-ric-card rounded-[8px] shadow-[0_1px_3px_rgba(0,0,0,0.1)] p-[20px] border border-ric-border border-t-[4px] border-t-[#4B5563]">
           <h2 className="text-[18px] font-bold text-ric-text mb-1 uppercase tracking-wider">Configurações Gerais</h2>
           <p className="text-[13px] text-ric-muted mb-6">Ajuste os valores padrões da aplicação</p>
-          
-          <div className="border border-ric-border rounded-[8px] overflow-hidden">
-            <div className="bg-[#F8F9FA] px-[20px] py-[15px] border-b border-ric-border flex justify-between items-center">
-              <h3 className="text-[14px] font-bold text-ric-text uppercase">Escala Padrão</h3>
-              <button onClick={handleSave} className="bg-ric-green text-white px-[15px] py-[6px] rounded-[4px] font-bold shadow-sm flex items-center hover:bg-[#2E8B1A] text-[12px] uppercase transition-colors cursor-pointer">
-                <Save size={14} className="mr-2" /> Salvar Padrão
-              </button>
-            </div>
-            <div className="p-[20px] space-y-[15px]">
-              {items.map((item, index) => (
-                <div key={item.id} className="relative bg-[#F8F9FA] p-[15px] rounded-[4px] border border-[#E9ECEF] flex flex-col gap-[10px]">
-                  <div className="flex flex-col md:flex-row gap-[10px] items-end w-full">
-                    <div className="flex-1 w-full scale-item">
-                      <label className="block text-[11px] font-bold text-ric-text mb-1 uppercase">Turno</label>
-                      <input type="text" list="shift-options" value={item.shift} onChange={e => handleUpdateItem(item.id, 'shift', e.target.value)} className="block w-full rounded-[4px] border-ric-border shadow-sm p-2 bg-white text-[13px] focus:ring-ric-red focus:border-ric-red" />
-                    </div>
-                    <div className="flex-1 w-full scale-item">
-                      <label className="block text-[11px] font-bold text-ric-text mb-1 uppercase">Horário</label>
-                      <input type="text" value={item.time} onChange={e => handleUpdateItem(item.id, 'time', e.target.value)} className="block w-full rounded-[4px] border-ric-border shadow-sm p-2 bg-white text-[13px] focus:ring-ric-red focus:border-ric-red" />
-                    </div>
-                    <div className="flex-1 w-full scale-item">
-                      <label className="block text-[11px] font-bold text-ric-text mb-1 uppercase">Repórter</label>
-                      <input type="text" list="reporter-options" value={item.reporterId} onChange={e => handleUpdateItem(item.id, 'reporterId', e.target.value)} className="block w-full rounded-[4px] border-ric-border shadow-sm p-2 bg-white text-[13px] focus:ring-ric-red focus:border-ric-red" placeholder="(Opcional)" />
-                    </div>
-                    <div className="flex-1 w-full scale-item">
-                      <label className="block text-[11px] font-bold text-ric-text mb-1 uppercase">Cinegrafista</label>
-                      <input type="text" list="cinegrafista-options" value={item.cinegrafistaId} onChange={e => handleUpdateItem(item.id, 'cinegrafistaId', e.target.value)} className="block w-full rounded-[4px] border-ric-border shadow-sm p-2 bg-white text-[13px] focus:ring-ric-red focus:border-ric-red" placeholder="(Opcional)" />
-                    </div>
-                    <button onClick={() => handleRemoveItem(item.id)} className="p-2 mb-[1px] text-ric-muted hover:text-ric-red bg-white border border-[#E9ECEF] rounded-[4px] cursor-pointer" title="Remover regra">
-                      <Trash2 size={16} />
-                    </button>
-                  </div>
-                  <div className="flex flex-col md:flex-row gap-[10px] items-start w-full">
-                    <div className="flex-1 w-full">
-                      <label className="block text-[11px] font-bold text-ric-text mb-1 uppercase">Observações e Detalhes</label>
-                      <input type="text" value={item.observation || ''} onChange={e => handleUpdateItem(item.id, 'observation', e.target.value)} className="block w-full rounded-[4px] border-ric-border shadow-sm p-2 bg-white text-[13px] focus:ring-ric-red focus:border-ric-red" placeholder="(Opcional)" />
-                    </div>
-                  </div>
-                </div>
-              ))}
-              <button onClick={handleAddItem} className="text-ric-blue text-[13px] font-bold hover:underline flex items-center bg-transparent border-none cursor-pointer mt-4">
-                <Plus size={14} className="mr-1" /> Adicionar linha na escala padrão
-              </button>
-            </div>
-          </div>
   
-          <div className="border border-ric-border rounded-[8px] overflow-hidden mt-6">
-            <div className="bg-[#F8F9FA] px-[20px] py-[15px] border-b border-ric-border flex justify-between items-center">
-              <h3 className="text-[14px] font-bold text-ric-text uppercase">Horários Padrão da Reunião de Pauta</h3>
-              <button onClick={handleSave} className="bg-ric-green text-white px-[15px] py-[6px] rounded-[4px] font-bold shadow-sm flex items-center hover:bg-[#2E8B1A] text-[12px] uppercase transition-colors cursor-pointer">
-                <Save size={14} className="mr-2" /> Salvar Padrão
-              </button>
+          {/* Configuração da Rotina do Estagiário (Checklist) */}
+          <div id="rotina-estagiario" className="border border-ric-border rounded-[8px] overflow-hidden bg-white shadow-sm">
+            <div className="bg-[#F8F9FA] px-[20px] py-[15px] border-b border-ric-border flex flex-wrap justify-between items-center gap-3">
+              <div>
+                <h3 className="text-[14px] font-bold text-ric-text uppercase flex items-center gap-2">
+                  <GraduationCap size={18} className="text-emerald-600" />
+                  Rotina do Estagiário (Checklist Padrão)
+                </h3>
+                <p className="text-[12px] text-ric-muted mt-0.5">
+                  Adicione, edite ou subtraia os itens que os estagiários devem cumprir e responder na rotina da redação.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleResetRoutineDefaults}
+                  className="bg-white text-ric-muted border border-gray-300 hover:text-ric-text px-3 py-1.5 rounded-[4px] font-bold shadow-sm flex items-center text-[11px] uppercase transition-colors cursor-pointer"
+                  title="Restaurar padrão sugerido"
+                >
+                  <RotateCcw size={13} className="mr-1.5" /> Padrão Sugerido
+                </button>
+                <button
+                  type="button"
+                  disabled={isSavingRoutine}
+                  onClick={() => handleSaveRoutineConfig()}
+                  className="bg-ric-green text-white px-4 py-1.5 rounded-[4px] font-bold shadow-sm flex items-center hover:bg-[#2E8B1A] text-[12px] uppercase transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  <Save size={14} className="mr-1.5" /> {isSavingRoutine ? 'Salvando...' : 'Salvar Rotina'}
+                </button>
+              </div>
             </div>
-            <div className="p-[20px] space-y-[15px]">
-              {lineupTimes.map((item) => (
-                <div key={item.id} className="relative bg-[#F8F9FA] p-[15px] rounded-[4px] border border-[#E9ECEF] flex gap-[10px] items-end w-max">
-                  <div>
-                    <label className="block text-[11px] font-bold text-ric-text mb-1 uppercase">Horário</label>
-                    <input type="time" value={item.time} onChange={e => handleUpdateLineupTime(item.id, e.target.value)} className="block w-[120px] rounded-[4px] border-ric-border shadow-sm p-2 bg-white text-[13px] focus:ring-ric-red focus:border-ric-red" />
-                  </div>
-                  <button onClick={() => handleRemoveLineupTime(item.id)} className="p-2 mb-[1px] text-ric-muted hover:text-ric-red bg-white border border-[#E9ECEF] rounded-[4px] cursor-pointer">
-                    <Trash2 size={16} />
-                  </button>
+
+            <div className="p-[20px] space-y-3">
+              {internRoutineItems.length === 0 ? (
+                <div className="text-center py-8 text-ric-muted text-[13px] bg-gray-50 rounded-lg border border-dashed border-gray-300">
+                  <GraduationCap size={32} className="mx-auto mb-2 text-gray-400 opacity-60" />
+                  <p className="font-bold">Nenhum item cadastrado na rotina do estagiário.</p>
+                  <p className="text-xs text-gray-500 mt-1">Clique abaixo para adicionar itens ou restaure o modelo recomendado.</p>
                 </div>
-              ))}
-              <button onClick={handleAddLineupTime} className="text-ric-blue text-[13px] font-bold hover:underline flex items-center bg-transparent border-none cursor-pointer mt-4">
-                <Plus size={14} className="mr-1" /> Adicionar horário
-              </button>
+              ) : (
+                internRoutineItems.map((item, idx) => (
+                  <div
+                    key={item.id}
+                    className="p-3.5 bg-[#F8F9FA] rounded-lg border border-gray-200 hover:border-gray-300 transition-all flex flex-col md:flex-row items-start md:items-center justify-between gap-3"
+                  >
+                    <div className="flex items-start gap-3 flex-1 min-w-0">
+                      <span className="w-6 h-6 rounded-full bg-emerald-100 text-emerald-800 text-xs font-black flex items-center justify-center shrink-0 mt-0.5">
+                        {idx + 1}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-bold text-[14px] text-ric-text">{item.title}</span>
+                          {item.responseType === 'text' && (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase px-2 py-0.5 rounded bg-blue-100 text-blue-800">
+                              <AlignLeft size={11} /> Espaço de Texto (o que achou)
+                            </span>
+                          )}
+                          {item.responseType === 'number' && (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase px-2 py-0.5 rounded bg-purple-100 text-purple-800">
+                              <Hash size={11} /> Numérico (potenciais pautas)
+                            </span>
+                          )}
+                          {item.responseType === 'none' && (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">
+                              <CheckSquare size={11} /> Apenas Confirmação
+                            </span>
+                          )}
+                        </div>
+
+                        {item.description && (
+                          <p className="text-[12px] text-ric-muted mt-0.5 leading-snug">{item.description}</p>
+                        )}
+
+                        {item.responsePlaceholder && (
+                          <p className="text-[11px] text-gray-500 italic mt-1 bg-white px-2 py-1 rounded border border-gray-100 inline-block">
+                            Prompt/Placeholder: "{item.responsePlaceholder}"
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 self-end md:self-center shrink-0">
+                      <button
+                        type="button"
+                        disabled={idx === 0}
+                        onClick={() => handleMoveRoutineItem(idx, 'up')}
+                        className="p-1.5 text-gray-500 hover:text-ric-blue bg-white border border-gray-200 rounded disabled:opacity-30 cursor-pointer"
+                        title="Mover para cima"
+                      >
+                        <ArrowUp size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        disabled={idx === internRoutineItems.length - 1}
+                        onClick={() => handleMoveRoutineItem(idx, 'down')}
+                        className="p-1.5 text-gray-500 hover:text-ric-blue bg-white border border-gray-200 rounded disabled:opacity-30 cursor-pointer"
+                        title="Mover para baixo"
+                      >
+                        <ArrowDown size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleOpenEditRoutineItem(item)}
+                        className="p-1.5 text-gray-600 hover:text-ric-blue bg-white border border-gray-200 rounded cursor-pointer"
+                        title="Editar item"
+                      >
+                        <Edit3 size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveRoutineItem(item.id)}
+                        className="p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 bg-white border border-gray-200 rounded cursor-pointer"
+                        title="Remover item da rotina"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+
+              <div className="pt-2 flex flex-wrap items-center justify-between gap-3">
+                <button
+                  type="button"
+                  onClick={handleOpenAddRoutineItem}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white text-[12px] font-black uppercase px-4 py-2 rounded shadow-sm flex items-center transition-colors cursor-pointer"
+                >
+                  <Plus size={15} className="mr-1.5" /> Adicionar Novo Item à Rotina
+                </button>
+                <span className="text-xs text-ric-muted">
+                  Total configurado: <strong>{internRoutineItems.length} itens</strong>
+                </span>
+              </div>
             </div>
           </div>
         </div>
@@ -530,6 +655,7 @@ export default function Settings() {
                     <option value="pauteiro">Pauteiro</option>
                     <option value="pauteira">Pauteira</option>
                     <option value="editor">Editor</option>
+                    <option value="estagiario">Estagiário(a)</option>
                     <option value="admin">Administrador</option>
                   </select>
                 </div>
@@ -542,7 +668,14 @@ export default function Settings() {
             </div>
           </div>
           
-          <h3 className="text-[14px] font-bold text-ric-text uppercase mb-[10px]">Usuários Cadastrados ({users.length})</h3>
+          <h3 className="text-[14px] font-bold text-ric-text uppercase mb-[10px]">
+            Usuários Cadastrados ({users.length})
+            {estagiarios.length > 0 && (
+              <span className="ml-2 text-xs font-normal normal-case text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
+                {estagiarios.length} {estagiarios.length === 1 ? 'estagiário(a)' : 'estagiários(as)'}
+              </span>
+            )}
+          </h3>
           <div className="border border-ric-border rounded-[8px] overflow-hidden">
              <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-[#F8F9FA]">
@@ -562,8 +695,14 @@ export default function Settings() {
                     <td className="px-5 py-3 whitespace-nowrap text-[13px] text-ric-blue font-black uppercase text-[11px]">{displayNames[u.uid] || u.name}</td>
                     <td className="px-5 py-3 whitespace-nowrap text-[13px] text-ric-muted">{u.email.replace('@ric.com.br', '')}</td>
                     <td className="px-5 py-3 whitespace-nowrap text-[13px] text-ric-text uppercase font-bold text-[11px]">
-                      <span className={`px-2 py-0.5 rounded-full ${u.role === 'admin' ? 'bg-ric-text text-white' : 'bg-blue-100 text-blue-700'}`}>
-                        {u.role}
+                      <span className={`px-2 py-0.5 rounded-full ${
+                        u.role === 'admin' ? 'bg-ric-text text-white font-black' :
+                        u.role === 'estagiario' ? 'bg-emerald-100 text-emerald-800 border border-emerald-300 font-black' :
+                        u.role === 'editor' ? 'bg-purple-100 text-purple-700 font-bold' :
+                        u.role === 'pauteiro' || u.role === 'pauteira' ? 'bg-amber-100 text-amber-800 font-bold' :
+                        'bg-blue-100 text-blue-700 font-bold'
+                      }`}>
+                        {u.role === 'estagiario' ? 'Estagiário(a)' : u.role}
                       </span>
                     </td>
                     <td className="px-5 py-3 whitespace-nowrap text-[13px] text-ric-text uppercase font-bold text-[11px]">
@@ -583,6 +722,149 @@ export default function Settings() {
                 ))}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Adicionar / Editar Item de Rotina */}
+      {isRoutineModalOpen && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full border border-gray-200 overflow-hidden animate-in fade-in duration-200">
+            <div className="bg-gradient-to-r from-emerald-800 to-emerald-700 px-5 py-4 text-white flex items-center justify-between">
+              <h3 className="font-bold text-[16px] uppercase tracking-wider flex items-center gap-2">
+                <GraduationCap size={20} />
+                {editingRoutineId ? 'Editar Item da Rotina' : 'Novo Item da Rotina do Estagiário'}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setIsRoutineModalOpen(false)}
+                className="text-white/80 hover:text-white text-xl font-bold cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveRoutineModal} className="p-6 space-y-4">
+              <div>
+                <label className="block text-[12px] font-black text-ric-text uppercase mb-1">
+                  Título da Ação / Tarefa <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={routineFormTitle}
+                  onChange={e => setRoutineFormTitle(e.target.value)}
+                  placeholder="Ex: Checar páginas, Checar WhatsApp, Apagar mensagens..."
+                  className="w-full bg-[#F8F9FA] border border-gray-200 rounded-lg p-2.5 text-[13px] font-bold outline-none focus:ring-2 focus:ring-emerald-500"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-[12px] font-black text-ric-text uppercase mb-1">
+                  Orientação / Descrição para o Estagiário (Opcional)
+                </label>
+                <textarea
+                  value={routineFormDesc}
+                  onChange={e => setRoutineFormDesc(e.target.value)}
+                  placeholder="Ex: Entrar nos portais e redes locais para achar pautas..."
+                  rows={2}
+                  className="w-full bg-[#F8F9FA] border border-gray-200 rounded-lg p-2.5 text-[13px] outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[12px] font-black text-ric-text uppercase mb-1">
+                  Tipo de Resposta / Campo para o Estagiário
+                </label>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                  <label className={`flex flex-col p-3 rounded-lg border cursor-pointer transition-all ${
+                    routineFormType === 'text' ? 'border-emerald-500 bg-emerald-50/60 font-bold text-emerald-900' : 'border-gray-200 hover:bg-gray-50 text-gray-700'
+                  }`}>
+                    <div className="flex items-center gap-1.5 text-xs">
+                      <input
+                        type="radio"
+                        name="routineType"
+                        value="text"
+                        checked={routineFormType === 'text'}
+                        onChange={() => setRoutineFormType('text')}
+                        className="text-emerald-600 focus:ring-emerald-500"
+                      />
+                      <span>Texto Livre</span>
+                    </div>
+                    <span className="text-[11px] text-gray-500 mt-1 font-normal">"Espaço para colocar o que achou"</span>
+                  </label>
+
+                  <label className={`flex flex-col p-3 rounded-lg border cursor-pointer transition-all ${
+                    routineFormType === 'number' ? 'border-emerald-500 bg-emerald-50/60 font-bold text-emerald-900' : 'border-gray-200 hover:bg-gray-50 text-gray-700'
+                  }`}>
+                    <div className="flex items-center gap-1.5 text-xs">
+                      <input
+                        type="radio"
+                        name="routineType"
+                        value="number"
+                        checked={routineFormType === 'number'}
+                        onChange={() => setRoutineFormType('number')}
+                        className="text-emerald-600 focus:ring-emerald-500"
+                      />
+                      <span>Número</span>
+                    </div>
+                    <span className="text-[11px] text-gray-500 mt-1 font-normal">"Quantas potenciais pautas"</span>
+                  </label>
+
+                  <label className={`flex flex-col p-3 rounded-lg border cursor-pointer transition-all ${
+                    routineFormType === 'none' ? 'border-emerald-500 bg-emerald-50/60 font-bold text-emerald-900' : 'border-gray-200 hover:bg-gray-50 text-gray-700'
+                  }`}>
+                    <div className="flex items-center gap-1.5 text-xs">
+                      <input
+                        type="radio"
+                        name="routineType"
+                        value="none"
+                        checked={routineFormType === 'none'}
+                        onChange={() => setRoutineFormType('none')}
+                        className="text-emerald-600 focus:ring-emerald-500"
+                      />
+                      <span>Apenas Checkbox</span>
+                    </div>
+                    <span className="text-[11px] text-gray-500 mt-1 font-normal">"Apagar mensagens celular"</span>
+                  </label>
+                </div>
+              </div>
+
+              {routineFormType !== 'none' && (
+                <div>
+                  <label className="block text-[12px] font-black text-ric-text uppercase mb-1">
+                    Texto do Placeholder / Instrução do Campo
+                  </label>
+                  <input
+                    type="text"
+                    value={routineFormPlaceholder}
+                    onChange={e => setRoutineFormPlaceholder(e.target.value)}
+                    placeholder={
+                      routineFormType === 'number'
+                        ? 'Ex: Quantas potenciais pautas encontradas?'
+                        : 'Ex: Espaço para colocar o que achou de mais relevante nas páginas...'
+                    }
+                    className="w-full bg-[#F8F9FA] border border-gray-200 rounded-lg p-2.5 text-[13px] outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+              )}
+
+              <div className="pt-3 flex items-center justify-end gap-2 border-t border-gray-100">
+                <button
+                  type="button"
+                  onClick={() => setIsRoutineModalOpen(false)}
+                  className="px-4 py-2 rounded text-[12px] font-bold uppercase text-gray-600 hover:bg-gray-100 cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2 rounded text-[12px] font-black uppercase transition-colors shadow-sm cursor-pointer flex items-center gap-1"
+                >
+                  <Check size={14} /> Salvar Item
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

@@ -3,9 +3,12 @@ import { collection, query, orderBy, onSnapshot, addDoc, updateDoc, doc, getDocs
 import { db } from '../lib/firebase';
 import { useAuth, UserData } from '../contexts/AuthContext';
 import { confirmAction } from '../lib/confirmHelper';
-import { BookOpen, Plus, FileText, Phone, Link as LinkIcon, History, Edit, Trash2, Save, X, AlertCircle } from 'lucide-react';
+import { BookOpen, Plus, FileText, Phone, Link as LinkIcon, History, Edit, Trash2, Save, X, AlertCircle, Scale, Copy, ExternalLink, Lock, Calendar } from 'lucide-react';
+import { Link, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { getDisplayNames } from '../lib/userUtils';
+import { LegalProcess } from '../types/legalProcess';
+import { format, parseISO } from 'date-fns';
 
 interface Pendency {
   id: string;
@@ -88,6 +91,22 @@ export default function Stories() {
       setLoading(false);
     });
     return () => unsub();
+  }, []);
+
+  const [allProcesses, setAllProcesses] = useState<LegalProcess[]>([]);
+
+  useEffect(() => {
+    const qProc = query(collection(db, 'legal_processes'), orderBy('createdAt', 'desc'));
+    const unsubProc = onSnapshot(qProc, (snap) => {
+      const list = snap.docs.map(d => ({
+        id: d.id,
+        ...(d.data() as Omit<LegalProcess, 'id'>)
+      }));
+      setAllProcesses(list);
+    }, (err) => {
+      console.warn('Erro ao carregar processos em Stories:', err);
+    });
+    return () => unsubProc();
   }, []);
 
   const handleCreate = async (e: React.FormEvent) => {
@@ -313,6 +332,7 @@ export default function Stories() {
               onUpdateTitle={(newVal: string) => updateStory(story.id, 'title', newVal)}
               onUpdateDesc={(newVal: string) => updateStory(story.id, 'description', newVal)}
               onUpdateResponsibles={(newIds: string[]) => updateStory(story.id, 'responsibleIds', newIds)}
+              processes={allProcesses.filter(p => p.storyId === story.id || (p.storyTitle && p.storyTitle.toLowerCase().trim() === story.title.toLowerCase().trim()))}
             />
           ))}
 
@@ -346,6 +366,7 @@ export default function Stories() {
                     onUpdateTitle={(newVal: string) => updateStory(story.id, 'title', newVal)}
                     onUpdateDesc={(newVal: string) => updateStory(story.id, 'description', newVal)}
                     onUpdateResponsibles={(newIds: string[]) => updateStory(story.id, 'responsibleIds', newIds)}
+                    processes={allProcesses.filter(p => p.storyId === story.id || (p.storyTitle && p.storyTitle.toLowerCase().trim() === story.title.toLowerCase().trim()))}
                   />
                 ))}
               </div>
@@ -364,7 +385,8 @@ function StoryCard({
   onAddPhone, onRemovePhone,
   onAddLink, onRemoveLink,
   onAddLog, onRemoveLog,
-  onUpdateTitle, onUpdateDesc, onUpdateResponsibles
+  onUpdateTitle, onUpdateDesc, onUpdateResponsibles,
+  processes = []
 }: any) {
 
   const respNames = (story.responsibleIds || [story.responsibleId]).map((id: string) => displayNames[id] || 'Não atribuído').join(', ');
@@ -543,6 +565,104 @@ function StoryCard({
              ) : (
                 <p className="text-[13px] text-gray-700 whitespace-pre-line">{story.description || <span className="italic text-gray-400">Sem contexto.</span>}</p>
              )}
+          </div>
+
+          {/* Processos Judiciais & Inquéritos deste Caso */}
+          <div className="bg-white p-4 rounded-xl border border-amber-200/90 shadow-2xs">
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-3 pb-2 border-b border-gray-100">
+              <div className="flex items-center gap-2">
+                <span className="p-1.5 bg-amber-100 text-amber-800 rounded-md">
+                  <Scale size={16} />
+                </span>
+                <h4 className="text-[12px] font-black uppercase tracking-wider text-ric-text">
+                  Processos Judiciais & Inquéritos Deste Caso ({processes.length})
+                </h4>
+              </div>
+              <Link
+                to="/processos"
+                className="text-[11px] font-bold text-amber-700 hover:text-amber-900 hover:underline flex items-center gap-1"
+              >
+                <span>Central de Processos</span> <ExternalLink size={12} />
+              </Link>
+            </div>
+
+            {processes.length === 0 ? (
+              <div className="text-center py-4 bg-gray-50 border border-dashed border-gray-200 rounded-lg text-xs text-gray-500">
+                <p className="font-bold text-gray-700">Nenhum processo cadastrado para este caso.</p>
+                <p className="text-[11px] text-gray-400 mt-0.5">Cadastre números CNJ, inquéritos policiais ou B.O. vinculados a esta história.</p>
+                <Link
+                  to="/processos"
+                  className="mt-2.5 inline-flex items-center gap-1.5 text-xs bg-amber-600 hover:bg-amber-700 text-white font-bold uppercase px-3 py-1.5 rounded-lg transition-colors shadow-2xs"
+                >
+                  <Plus size={13} strokeWidth={3} /> Cadastrar Processo p/ Este Caso
+                </Link>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {processes.map((proc: LegalProcess) => (
+                  <div key={proc.id} className="bg-[#F8F9FA] border border-gray-200 rounded-lg p-3 hover:border-amber-300 transition-all flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-center justify-between gap-2 mb-1.5">
+                        <span className="text-[10px] font-black text-ric-blue bg-blue-100 px-1.5 py-0.5 rounded">
+                          {proc.court}
+                        </span>
+                        <div className="flex items-center gap-1">
+                          {proc.isSecret && (
+                            <span className="text-[9px] font-black uppercase bg-purple-100 text-purple-800 px-1.5 py-0.5 rounded flex items-center gap-0.5">
+                              <Lock size={9} /> Segredo
+                            </span>
+                          )}
+                          {proc.defendantStatus === 'Preso Preventivo' && (
+                            <span className="text-[9px] font-black uppercase bg-red-100 text-red-800 px-1.5 py-0.5 rounded">
+                              Preso
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-mono font-black text-xs text-ric-text select-all">
+                          {proc.processNumber}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            navigator.clipboard.writeText(proc.processNumber);
+                            toast.success(`CNJ ${proc.processNumber} copiado!`);
+                          }}
+                          className="p-1 text-gray-400 hover:text-ric-blue rounded hover:bg-white cursor-pointer"
+                          title="Copiar número"
+                        >
+                          <Copy size={13} />
+                        </button>
+                      </div>
+
+                      <div className="text-[11px] text-gray-600 mt-1 leading-snug">
+                        {proc.defendants && <span>Réu(s): <strong>{proc.defendants}</strong></span>}
+                        {proc.comarca && <span className="text-gray-400"> · {proc.comarca}</span>}
+                      </div>
+
+                      {proc.nextHearingDate && (
+                        <div className="mt-2 text-[10px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-1 rounded flex items-center gap-1">
+                          <Calendar size={11} /> Audiência: {format(parseISO(proc.nextHearingDate), 'dd/MM/yyyy')} {proc.nextHearingTime && `às ${proc.nextHearingTime}`}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="mt-2 pt-2 border-t border-gray-200/80 flex items-center justify-between text-[10px]">
+                      <span className="text-gray-500 font-medium">{proc.stage}</span>
+                      <Link
+                        to="/processos"
+                        className="text-amber-700 hover:underline font-bold"
+                      >
+                        Abrir ficha completa →
+                      </Link>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

@@ -8,7 +8,7 @@ export interface UserData {
   uid: string;
   name: string;
   email: string;
-  role: 'reporter' | 'pauteiro' | 'pauteira' | 'editor' | 'admin' | 'cinegrafista';
+  role: 'reporter' | 'pauteiro' | 'pauteira' | 'editor' | 'admin' | 'cinegrafista' | 'estagiario';
   isActive?: boolean;
   fcmTokens?: string[];
 }

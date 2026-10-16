@@ -27,9 +27,10 @@ export const PREDEFINED_USERS = [
   { username: 'jefferson', name: 'Jefferson', role: 'pauteiro' },
   { username: 'sabrina', name: 'Sabrina', role: 'pauteiro' },
   { username: 'paola', name: 'Paola', role: 'pauteiro' },
-  { username: 'pedro', name: 'Pedro', role: 'pauteiro' },
+  { username: 'pedro', name: 'Pedro', role: 'estagiario' },
 
-  // Cinegrafistas
+  // Estagiários
+  // Pedro é estagiário da redação
   { username: 'jeffersonw', name: 'Jefferson Weiss', role: 'cinegrafista' },
 
   // Editores de Imagem (Zand, Jamir, Jean, Vagner, Valdeilton)

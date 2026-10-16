@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { Bell, Calendar, CheckSquare, ClipboardList, LayoutDashboard, LogOut, Users, Settings as SettingsIcon, AlertCircle, MonitorPlay, Menu, X, BookOpen, MessageSquare, Smartphone } from 'lucide-react';
+import { Bell, Calendar, CheckSquare, ClipboardList, LayoutDashboard, LogOut, Users, Settings as SettingsIcon, AlertCircle, MonitorPlay, Menu, X, BookOpen, MessageSquare, Smartphone, Scale } from 'lucide-react';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import NotificationHandler from './NotificationHandler';
@@ -76,6 +76,7 @@ export default function Layout() {
         { name: 'Meu Painel', icon: ClipboardList, path: '/my-dashboard', hide: !isReporter },
         { name: 'Lembretes', icon: Bell, path: '/reminders', badge: unreadRemindersCount },
         { name: 'Histórias (Repercussão)', icon: BookOpen, path: '/stories' },
+        { name: 'Processos Judiciais', icon: Scale, path: '/processos' },
         { name: 'Checklist', icon: CheckSquare, path: '/checklist' },
         { name: 'Configurações', icon: SettingsIcon, path: '/settings' }
       ].filter(item => !item.hide);

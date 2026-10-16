@@ -33,7 +33,7 @@ service cloud.firestore {
       allow read: if isSignedIn();
       // Allow users to update their own profile, or admins
       allow update: if isSignedIn() && (request.auth.uid == userId || isAdmin())
-                    && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'email', 'role', 'createdAt', 'fcmTokens']);
+                    && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'email', 'role', 'createdAt', 'fcmTokens', 'isActive']);
       allow create: if isSignedIn() && (request.auth.uid == userId || isAdmin());
       allow delete: if isAdmin();
     }
@@ -107,6 +107,14 @@ service cloud.firestore {
       allow update: if isSignedIn();
       allow delete: if isSignedIn();
     }
+    match /internRoutineTemplates/{templateId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn();
+    }
+    match /internRoutineRuns/{runId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn();
+    }
     match /checklists/{listId} {
       allow read: if isSignedIn();
       allow write: if isSignedIn() && (isEditorOrAdmin() || isAdmin());
@@ -133,6 +141,20 @@ service cloud.firestore {
       allow create: if isSignedIn();
       allow update: if isSignedIn() && (isEditorOrAdmin() || existing().createdBy == request.auth.uid);
       allow delete: if isEditorOrAdmin();
+    }
+
+    match /quickReminders/{reminderId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+      allow update: if isSignedIn();
+      allow delete: if isSignedIn();
+    }
+
+    match /legal_processes/{processId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+      allow update: if isSignedIn();
+      allow delete: if isSignedIn();
     }
 
     match /retrancas/{retrancaId} {
