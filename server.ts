@@ -71,14 +71,30 @@ async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT) || 3000;
 
-  // Ensure public/uploads directory exists
+  // Ensure public/uploads directory and chunk temp directory exist
   const uploadsDir = path.join(process.cwd(), 'public', 'uploads');
+  const chunksDir = path.join(uploadsDir, '_chunks');
   if (!fs.existsSync(uploadsDir)) {
     fs.mkdirSync(uploadsDir, { recursive: true });
   }
+  if (!fs.existsSync(chunksDir)) {
+    fs.mkdirSync(chunksDir, { recursive: true });
+  }
+
+  // Universal CORS & Preflight Middleware (Crucial for iFrames and cloud proxies)
+  app.use((req, res, next) => {
+    res.header("Access-Control-Allow-Origin", "*");
+    res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, HEAD, PATCH");
+    res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization, Range, X-Upload-Id, X-Chunk-Index, X-Total-Chunks");
+    res.header("Access-Control-Expose-Headers", "Content-Range, Accept-Ranges, Content-Length, Content-Disposition");
+    if (req.method === "OPTIONS") {
+      return res.status(200).end();
+    }
+    next();
+  });
 
   // Multer disk storage for fast streaming binary uploads (multipart/form-data)
-  // Essential for large video files (up to 150MB) without memory bloating
+  // Essential for large video files without memory bloating
   const storage = multer.diskStorage({
     destination: (_req, _file, cb) => {
       cb(null, uploadsDir);
@@ -94,29 +110,129 @@ async function startServer() {
   const upload = multer({
     storage,
     limits: {
-      fileSize: 150 * 1024 * 1024 // 150MB limit per file
+      fileSize: 250 * 1024 * 1024 // 250MB limit per file
     }
   });
 
-  // Safe JSON & urlencoded body parser with 150mb limit for file uploads and base64 payloads
+  // Multer storage for chunk uploads
+  const chunkStorage = multer.diskStorage({
+    destination: (_req, _file, cb) => {
+      cb(null, chunksDir);
+    },
+    filename: (req, _file, cb) => {
+      const uploadId = (req.body.uploadId || 'temp').replace(/[^a-zA-Z0-9_-]/g, '');
+      const chunkIndex = parseInt(req.body.chunkIndex || '0', 10);
+      cb(null, `${uploadId}_chunk_${chunkIndex}`);
+    }
+  });
+  const uploadChunk = multer({
+    storage: chunkStorage,
+    limits: {
+      fileSize: 20 * 1024 * 1024 // 20MB per chunk max
+    }
+  });
+
+  // Safe JSON & urlencoded body parser with 150mb limit for base64 payloads
   app.use(express.json({ limit: '150mb' }));
   app.use(express.urlencoded({ extended: true, limit: '150mb' }));
 
-  // Serve static files from public/uploads with range request support for video playback
-  app.use('/uploads', express.static(uploadsDir));
+  // Serve static files from public/uploads with range request support for video playback & CORS
+  app.use('/uploads', express.static(uploadsDir, {
+    setHeaders: (res) => {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Accept-Ranges', 'bytes');
+    }
+  }));
 
   // Health check
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok", time: new Date().toISOString() });
   });
 
-  // Multipart Binary File Upload (RECOMMENDED for videos & large files)
+  // 1. Chunked Upload Route (BEST FOR LARGE WHATSAPP VIDEOS: avoids proxy timeouts & 32MB payload limits)
+  app.post("/api/upload-chunk", (req, res) => {
+    uploadChunk.single('chunk')(req, res, async (err) => {
+      if (err) {
+        console.error("[Upload Chunk Multer Error]:", err);
+        return res.status(400).json({ error: err.message || "Erro no upload do pedaço do vídeo." });
+      }
+
+      try {
+        const uploadId = (req.body.uploadId || '').replace(/[^a-zA-Z0-9_-]/g, '');
+        const chunkIndex = parseInt(req.body.chunkIndex, 10);
+        const totalChunks = parseInt(req.body.totalChunks, 10);
+        const originalName = req.body.fileName || 'video.mp4';
+        const fileType = req.body.fileType || 'video/mp4';
+
+        if (!uploadId || isNaN(chunkIndex) || isNaN(totalChunks)) {
+          return res.status(400).json({ error: "Parâmetros de chunk inválidos (uploadId, chunkIndex ou totalChunks ausentes)." });
+        }
+
+        // If this is the last chunk, assemble the file
+        if (chunkIndex === totalChunks - 1) {
+          const ext = path.extname(originalName) || '.mp4';
+          const baseRaw = path.basename(originalName, ext).replace(/[^a-zA-Z0-9_-]/g, '_').substring(0, 40) || 'video';
+          const finalFilename = `${Date.now()}_${Math.random().toString(36).substring(2, 8)}_${baseRaw}${ext}`;
+          const finalFilePath = path.join(uploadsDir, finalFilename);
+
+          const writeStream = fs.createWriteStream(finalFilePath);
+
+          for (let i = 0; i < totalChunks; i++) {
+            const chunkPath = path.join(chunksDir, `${uploadId}_chunk_${i}`);
+            if (!fs.existsSync(chunkPath)) {
+              writeStream.close();
+              return res.status(400).json({ error: `Pedaço ${i} não encontrado no servidor. Tente reenviar.` });
+            }
+            const chunkData = fs.readFileSync(chunkPath);
+            writeStream.write(chunkData);
+            try {
+              fs.unlinkSync(chunkPath);
+            } catch {
+              // ignore
+            }
+          }
+
+          writeStream.end();
+
+          await new Promise<void>((resolve, reject) => {
+            writeStream.on('finish', () => resolve());
+            writeStream.on('error', (err) => reject(err));
+          });
+
+          const stats = fs.statSync(finalFilePath);
+          console.log(`[Upload Chunked] Vídeo montado com sucesso: ${finalFilename} (${stats.size} bytes)`);
+
+          return res.json({
+            success: true,
+            completed: true,
+            url: `/uploads/${finalFilename}`,
+            name: originalName,
+            type: fileType,
+            size: stats.size
+          });
+        }
+
+        // Chunk saved successfully, awaiting next chunks
+        return res.json({
+          success: true,
+          completed: false,
+          chunkIndex,
+          totalChunks
+        });
+      } catch (assembleErr: any) {
+        console.error("Erro ao montar chunks do vídeo:", assembleErr);
+        return res.status(500).json({ error: "Falha ao finalizar montagem do arquivo: " + assembleErr.message });
+      }
+    });
+  });
+
+  // 2. Multipart Binary File Upload (Direct Single-File Upload)
   app.post("/api/upload-file", (req, res, next) => {
     upload.single('file')(req, res, (err) => {
       if (err) {
         console.error("[Upload Multer Error]:", err);
         if (err.code === 'LIMIT_FILE_SIZE') {
-          return res.status(400).json({ error: "O vídeo/arquivo excede o limite máximo permitido de 150MB." });
+          return res.status(400).json({ error: "O vídeo/arquivo excede o limite máximo permitido de 250MB." });
         }
         return res.status(400).json({ error: err.message || "Erro ao processar upload do arquivo." });
       }
@@ -138,7 +254,7 @@ async function startServer() {
     });
   });
 
-  // File upload route (Base64 JSON Fallback)
+  // 3. File upload route (Base64 JSON Fallback)
   app.post("/api/upload", (req, res) => {
     try {
       const { name, type, data } = req.body;
@@ -159,8 +275,8 @@ async function startServer() {
       }
 
       const buffer = Buffer.from(base64Data, 'base64');
-      if (buffer.length > 150 * 1024 * 1024) {
-        return res.status(400).json({ error: "Arquivo excede o limite máximo permitido de 150MB." });
+      if (buffer.length > 250 * 1024 * 1024) {
+        return res.status(400).json({ error: "Arquivo excede o limite máximo permitido de 250MB." });
       }
 
       const ext = path.extname(name) || '';

@@ -46,7 +46,8 @@ import {
   Copy,
   Pencil,
   Lock,
-  Video
+  Video,
+  Link as LinkIcon
 } from 'lucide-react';
 import { confirmAction } from '../lib/confirmHelper';
 
@@ -90,8 +91,12 @@ export default function WhatsAppMessages() {
   const [description, setDescription] = useState('');
   const [journal, setJournal] = useState<'BG' | 'Cidade Alerta'>('BG');
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<{ fileName: string; pct: number } | null>(null);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
   const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
+  const [showLinkInput, setShowLinkInput] = useState(false);
+  const [customUrl, setCustomUrl] = useState('');
+  const [customUrlName, setCustomUrlName] = useState('');
 
   // State for Editing WhatsApp Message (Only Creator)
   const [editingMessage, setEditingMessage] = useState<WhatsAppMessage | null>(null);
@@ -103,7 +108,11 @@ export default function WhatsAppMessages() {
   const [editStatus, setEditStatus] = useState<WhatsAppMessage['status']>('pendente');
   const [editAttachments, setEditAttachments] = useState<AttachmentItem[]>([]);
   const [isEditUploading, setIsEditUploading] = useState(false);
+  const [editUploadProgress, setEditUploadProgress] = useState<{ fileName: string; pct: number } | null>(null);
   const [isEditDraggingOver, setIsEditDraggingOver] = useState(false);
+  const [showEditLinkInput, setShowEditLinkInput] = useState(false);
+  const [customEditUrl, setCustomEditUrl] = useState('');
+  const [customEditUrlName, setCustomEditUrlName] = useState('');
 
   // WhatsApp Turning into Pauta & Lembrete State
   const [conversionMsg, setConversionMsg] = useState<WhatsAppMessage | null>(null);
@@ -183,86 +192,115 @@ export default function WhatsAppMessages() {
 
   const uploadFiles = async (
     fileList: FileList | File[],
-    currentAttachments: AttachmentItem[],
     setTargetAttachments: React.Dispatch<React.SetStateAction<AttachmentItem[]>>,
-    setTargetUploading: React.Dispatch<React.SetStateAction<boolean>>
+    setTargetUploading: React.Dispatch<React.SetStateAction<boolean>>,
+    setProgressState?: React.Dispatch<React.SetStateAction<{ fileName: string; pct: number } | null>>
   ) => {
     const files = Array.from(fileList);
     if (!files || files.length === 0) return;
 
-    const MAX_FILE_SIZE = 150 * 1024 * 1024; // 150MB (Ideal para vídeos de WhatsApp e reportagem)
+    const MAX_FILE_SIZE = 250 * 1024 * 1024; // 250MB (Ideal para vídeos de WhatsApp, câmeras e reportagem)
     setTargetUploading(true);
-    const newAttachments = [...currentAttachments];
 
-    for (const file of files) {
-      if (file.size > MAX_FILE_SIZE) {
-        toast.error(`Arquivo "${file.name}" excede o limite máximo de 150MB.`);
-        continue;
-      }
-
-      // Detecção ampla de tipo (inclusive quando navegador não define MIME)
-      const isVideoFile = file.type.startsWith('video/') || /\.(mp4|mov|m4v|webm|avi|mkv|3gp|wmv|flv|ts|ogv)$/i.test(file.name);
-      const isImageFile = file.type.startsWith('image/') || /\.(jpg|jpeg|png|webp|gif|svg|bmp|heic|heif)$/i.test(file.name);
-      const isAudioFile = file.type.startsWith('audio/') || /\.(mp3|ogg|wav|m4a|aac|wma|opus)$/i.test(file.name);
-
-      const fileTypeCategory = isVideoFile 
-        ? 'video' 
-        : isImageFile 
-        ? 'image' 
-        : isAudioFile 
-        ? 'audio' 
-        : 'doc';
-
-      const fileSizeMB = (file.size / (1024 * 1024)).toFixed(1);
-      const uploadToastId = isVideoFile
-        ? toast.loading(`Enviando vídeo "${file.name}" (${fileSizeMB}MB)...`)
-        : undefined;
-
-      try {
-        // 1. Prioridade: Upload streaming via FormData (multipart/form-data)
-        // Evita carregar gigabytes de base64 na memória do navegador e no JSON
-        const formData = new FormData();
-        formData.append('file', file);
-
-        let fileUrl = '';
-        const res = await fetch('/api/upload-file', {
-          method: 'POST',
-          body: formData,
-        });
-
-        if (!res.ok) {
-          const errRes = await res.json().catch(() => ({}));
-          throw new Error(errRes.error || `Erro HTTP ${res.status}`);
+    try {
+      for (const file of files) {
+        if (file.size > MAX_FILE_SIZE) {
+          toast.error(`Arquivo "${file.name}" excede o limite máximo de 250MB.`);
+          continue;
         }
 
-        const data = await res.json();
-        fileUrl = data.url;
+        const isVideoFile = file.type.startsWith('video/') || /\.(mp4|mov|m4v|webm|avi|mkv|3gp|wmv|flv|ts|ogv)$/i.test(file.name);
+        const isImageFile = file.type.startsWith('image/') || /\.(jpg|jpeg|png|webp|gif|svg|bmp|heic|heif)$/i.test(file.name);
+        const isAudioFile = file.type.startsWith('audio/') || /\.(mp3|ogg|wav|m4a|aac|wma|opus)$/i.test(file.name);
 
-        let smallDataUrl: string | undefined = undefined;
-        if (isImageFile && file.size <= 500 * 1024) {
+        const fileTypeCategory = isVideoFile 
+          ? 'video' 
+          : isImageFile 
+          ? 'image' 
+          : isAudioFile 
+          ? 'audio' 
+          : 'doc';
+
+        const fileSizeMB = (file.size / (1024 * 1024)).toFixed(1);
+        const uploadToastId = toast.loading(`Enviando ${isVideoFile ? 'vídeo' : 'arquivo'} "${file.name}" (${fileSizeMB}MB)...`);
+        if (setProgressState) setProgressState({ fileName: file.name, pct: 5 });
+
+        let fileUrl = '';
+        let uploadSucceeded = false;
+
+        // 1. CHUNKED UPLOAD: Slices large files (especially videos) into 4MB pieces
+        // This avoids proxy 32MB payload limits, connection timeouts and drops
+        const CHUNK_SIZE = 4 * 1024 * 1024; // 4MB chunks
+        if (file.size > CHUNK_SIZE || isVideoFile) {
           try {
-            smallDataUrl = await readFileAsBase64(file);
-          } catch {
-            // ignore
+            const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+            const uploadId = `up_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+
+            for (let i = 0; i < totalChunks; i++) {
+              const start = i * CHUNK_SIZE;
+              const end = Math.min(start + CHUNK_SIZE, file.size);
+              const chunkBlob = file.slice(start, end);
+
+              const chunkForm = new FormData();
+              chunkForm.append('uploadId', uploadId);
+              chunkForm.append('chunkIndex', String(i));
+              chunkForm.append('totalChunks', String(totalChunks));
+              chunkForm.append('fileName', file.name);
+              chunkForm.append('fileType', file.type || (isVideoFile ? 'video/mp4' : 'application/octet-stream'));
+              chunkForm.append('chunk', chunkBlob, 'chunk.bin');
+
+              const chunkRes = await fetch('/api/upload-chunk', {
+                method: 'POST',
+                body: chunkForm,
+              });
+
+              if (!chunkRes.ok) {
+                const errJson = await chunkRes.json().catch(() => ({}));
+                throw new Error(errJson.error || `Erro no pedaço ${i + 1}/${totalChunks}`);
+              }
+
+              const chunkData = await chunkRes.json();
+              const pct = Math.min(99, Math.round(((i + 1) / totalChunks) * 100));
+              if (setProgressState) setProgressState({ fileName: file.name, pct });
+              toast.loading(`Subindo "${file.name}" (${pct}%)...`, { id: uploadToastId });
+
+              if (chunkData.completed && chunkData.url) {
+                fileUrl = chunkData.url;
+                uploadSucceeded = true;
+                break;
+              }
+            }
+          } catch (chunkErr: any) {
+            console.warn('Chunked upload falhou, tentando fallback multipart:', chunkErr);
           }
         }
 
-        newAttachments.push({
-          name: file.name,
-          url: fileUrl,
-          type: fileTypeCategory,
-          size: file.size,
-          ...(smallDataUrl ? { dataUrl: smallDataUrl } : {}),
-        });
+        // 2. Fallback Multipart Single-File Upload
+        if (!uploadSucceeded) {
+          try {
+            const formData = new FormData();
+            formData.append('file', file);
 
-        if (uploadToastId) toast.dismiss(uploadToastId);
-        toast.success(`"${file.name}" adicionado com sucesso!`);
-      } catch (err: any) {
-        if (uploadToastId) toast.dismiss(uploadToastId);
-        console.warn('Falha no upload via multipart, testando fallback base64:', err);
+            const res = await fetch('/api/upload-file', {
+              method: 'POST',
+              body: formData,
+            });
 
-        // Fallback para arquivos menores que 20MB via base64
-        if (file.size <= 20 * 1024 * 1024) {
+            if (!res.ok) {
+              const errRes = await res.json().catch(() => ({}));
+              throw new Error(errRes.error || `Erro HTTP ${res.status}`);
+            }
+
+            const data = await res.json();
+            fileUrl = data.url;
+            uploadSucceeded = true;
+          } catch (multiErr: any) {
+            console.warn('Fallback multipart falhou, testando base64:', multiErr);
+          }
+        }
+
+        // 3. Fallback Base64 JSON (for files <= 25MB)
+        if (!uploadSucceeded && file.size <= 25 * 1024 * 1024) {
           try {
             const base64Data = await readFileAsBase64(file);
             const res = await fetch('/api/upload', {
@@ -277,59 +315,115 @@ export default function WhatsAppMessages() {
 
             if (res.ok) {
               const data = await res.json();
-              newAttachments.push({
-                name: file.name,
-                url: data.url,
-                type: fileTypeCategory,
-                size: file.size,
-              });
-              toast.success(`"${file.name}" adicionado com sucesso!`);
-              continue;
+              fileUrl = data.url;
+              uploadSucceeded = true;
             }
-          } catch (innerErr) {
-            console.warn('Fallback base64 também falhou:', innerErr);
+          } catch (b64Err) {
+            console.warn('Fallback base64 falhou:', b64Err);
           }
         }
 
-        // Fallback local Firestore para pequenos arquivos < 700KB
-        if (file.size < 700 * 1024) {
-          try {
-            const base64Data = await readFileAsBase64(file);
-            newAttachments.push({
-              name: file.name,
-              url: base64Data,
-              type: fileTypeCategory,
-              size: file.size,
-              dataUrl: base64Data,
-            });
-            toast.success(`"${file.name}" anexado localmente!`);
-            continue;
-          } catch {
-            // ignore
-          }
-        }
+        if (uploadToastId) toast.dismiss(uploadToastId);
 
-        toast.error(`Falha ao subir ${file.name}: ` + (err.message || 'Erro ao processar arquivo'));
+        if (uploadSucceeded && fileUrl) {
+          let smallDataUrl: string | undefined = undefined;
+          if (isImageFile && file.size <= 400 * 1024) {
+            try {
+              smallDataUrl = await readFileAsBase64(file);
+            } catch {
+              // ignore
+            }
+          }
+
+          const newItem: AttachmentItem = {
+            name: file.name,
+            url: fileUrl,
+            type: fileTypeCategory,
+            size: file.size,
+            ...(smallDataUrl ? { dataUrl: smallDataUrl } : {}),
+          };
+
+          // Immediately update state per file so user sees it right away
+          setTargetAttachments(prev => [...prev, newItem]);
+          toast.success(`"${file.name}" anexado com sucesso!`);
+        } else {
+          toast.error(`Falha ao subir "${file.name}". Verifique o formato ou tente novamente.`);
+        }
       }
+    } finally {
+      setTargetUploading(false);
+      if (setProgressState) setProgressState(null);
     }
-
-    setTargetAttachments(newAttachments);
-    setTargetUploading(false);
   };
 
   const processFiles = async (fileList: FileList | File[]) => {
-    await uploadFiles(fileList, attachments, setAttachments, setIsUploading);
+    await uploadFiles(fileList, setAttachments, setIsUploading, setUploadProgress);
   };
 
   const processEditFiles = async (fileList: FileList | File[]) => {
-    await uploadFiles(fileList, editAttachments, setEditAttachments, setIsEditUploading);
+    await uploadFiles(fileList, setEditAttachments, setIsEditUploading, setEditUploadProgress);
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) {
-      await processFiles(e.target.files);
+    if (e.target.files && e.target.files.length > 0) {
+      const selected = Array.from(e.target.files) as File[];
       e.target.value = '';
+      await processFiles(selected);
     }
+  };
+
+  const handleEditFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      const selected = Array.from(e.target.files) as File[];
+      e.target.value = '';
+      await processEditFiles(selected);
+    }
+  };
+
+  const handlePasteFiles = (e: React.ClipboardEvent, isEdit: boolean = false) => {
+    if (e.clipboardData.files && e.clipboardData.files.length > 0) {
+      e.preventDefault();
+      const files = Array.from(e.clipboardData.files) as File[];
+      if (isEdit) {
+        processEditFiles(files);
+      } else {
+        processFiles(files);
+      }
+      toast.success('Arquivo(s) colado(s) da área de transferência!');
+    }
+  };
+
+  const handleAddExternalLink = (isEdit: boolean = false) => {
+    const rawUrl = isEdit ? customEditUrl.trim() : customUrl.trim();
+    const rawName = isEdit ? customEditUrlName.trim() : customUrlName.trim();
+    if (!rawUrl) {
+      toast.error('Informe a URL do vídeo ou arquivo (Google Drive, WeTransfer, YouTube, etc.).');
+      return;
+    }
+
+    const isVideo = /\.(mp4|webm|mov|m4v|avi|mkv|3gp)$/i.test(rawUrl) || 
+      /drive\.google\.com|youtube\.com|youtu\.be|wetransfer\.com|dropbox\.com/i.test(rawUrl);
+
+    const name = rawName || (isVideo ? 'Vídeo em Nuvem' : 'Arquivo / Link Externo');
+    const newItem: AttachmentItem = {
+      name,
+      url: rawUrl,
+      type: isVideo ? 'video' : 'doc',
+      size: 0,
+    };
+
+    if (isEdit) {
+      setEditAttachments(prev => [...prev, newItem]);
+      setCustomEditUrl('');
+      setCustomEditUrlName('');
+      setShowEditLinkInput(false);
+    } else {
+      setAttachments(prev => [...prev, newItem]);
+      setCustomUrl('');
+      setCustomUrlName('');
+      setShowLinkInput(false);
+    }
+    toast.success('Link anexado com sucesso!');
   };
 
   const removeAttachment = (index: number) => {
@@ -342,6 +436,10 @@ export default function WhatsAppMessages() {
     setPhone('');
     setJournal('BG');
     setAttachments([]);
+    setShowLinkInput(false);
+    setCustomUrl('');
+    setCustomUrlName('');
+    setUploadProgress(null);
     setIsFormOpen(false);
   };
 
@@ -361,6 +459,10 @@ export default function WhatsAppMessages() {
     setEditPauteiraId(msg.pauteiraId || userData?.uid || '');
     setEditStatus(msg.status || 'pendente');
     setEditAttachments(msg.attachments ? [...msg.attachments] : []);
+    setShowEditLinkInput(false);
+    setCustomEditUrl('');
+    setCustomEditUrlName('');
+    setEditUploadProgress(null);
   };
 
   const closeEditModal = () => {
@@ -371,6 +473,10 @@ export default function WhatsAppMessages() {
     setEditJournal('BG');
     setEditPauteiraId('');
     setEditAttachments([]);
+    setShowEditLinkInput(false);
+    setCustomEditUrl('');
+    setCustomEditUrlName('');
+    setEditUploadProgress(null);
   };
 
   const handleEditSubmit = async (e: React.FormEvent) => {
@@ -1003,16 +1109,40 @@ export default function WhatsAppMessages() {
               </div>
 
               {/* Attachments */}
-              <div>
+              <div onPaste={(e) => handlePasteFiles(e, false)}>
                 <label className="block text-[10px] font-black text-slate-600 mb-2 uppercase tracking-wider flex items-center justify-between">
                   <span>Anexos / Mídias Enviadas ({attachments.length})</span>
                   {isUploading && (
                     <span className="text-emerald-700 font-bold animate-pulse text-[10px] flex items-center gap-1.5">
-                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span>
-                      Subindo arquivo para o servidor...
+                      <RefreshCw size={11} className="animate-spin text-emerald-600" />
+                      Enviando vídeo/arquivo para a redação...
                     </span>
                   )}
                 </label>
+
+                {/* Real-time upload progress bar */}
+                {uploadProgress && (
+                  <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 mb-2.5 animate-in fade-in">
+                    <div className="flex items-center justify-between text-xs font-bold text-emerald-900 mb-1.5">
+                      <span className="flex items-center gap-1.5 truncate">
+                        <Video size={14} className="text-emerald-600 animate-bounce shrink-0" />
+                        <span className="truncate">Subindo vídeo: <strong>{uploadProgress.fileName}</strong></span>
+                      </span>
+                      <span className="tabular-nums font-mono text-[11px] bg-emerald-200/80 px-2 py-0.5 rounded text-emerald-800 shrink-0">
+                        {uploadProgress.pct}%
+                      </span>
+                    </div>
+                    <div className="w-full bg-emerald-200/60 rounded-full h-2 overflow-hidden">
+                      <div 
+                        className="bg-emerald-600 h-2 rounded-full transition-all duration-200 ease-out"
+                        style={{ width: `${uploadProgress.pct}%` }}
+                      />
+                    </div>
+                    <span className="text-[10px] text-emerald-700 mt-1 block">
+                      Transferência em streaming sem travar o navegador. Aguarde...
+                    </span>
+                  </div>
+                )}
 
                 {/* Dropzone area */}
                 <div
@@ -1020,10 +1150,7 @@ export default function WhatsAppMessages() {
                     e.preventDefault();
                     setIsDraggingOver(true);
                   }}
-                  onDragLeave={(e) => {
-                    e.preventDefault();
-                    setIsDraggingOver(false);
-                  }}
+                  onDragLeave={() => setIsDraggingOver(false)}
                   onDrop={async (e) => {
                     e.preventDefault();
                     setIsDraggingOver(false);
@@ -1067,10 +1194,12 @@ export default function WhatsAppMessages() {
                               <p className="font-bold text-slate-800 text-[11px] truncate leading-tight">
                                 {att.name}
                               </p>
-                              {att.size && (
+                              {att.size ? (
                                 <span className="text-[10px] text-slate-400">
                                   {(att.size / 1024 / 1024).toFixed(2)} MB
                                 </span>
+                              ) : (
+                                <span className="text-[10px] text-purple-600 font-medium">Link Nuvem</span>
                               )}
                             </div>
                           </div>
@@ -1090,10 +1219,10 @@ export default function WhatsAppMessages() {
                   <label className="flex flex-col items-center justify-center py-3 px-2 cursor-pointer group">
                     <div className="flex items-center gap-2 text-slate-600 group-hover:text-emerald-700 font-bold text-xs">
                       <Plus size={16} className="text-emerald-600 group-hover:scale-110 transition-transform" />
-                      <span>Arraste ou clique para selecionar vídeos, fotos ou documentos</span>
+                      <span>Arraste ou clique para selecionar vídeos, fotos ou áudios</span>
                     </div>
                     <span className="text-[10px] text-slate-400 mt-0.5">
-                      Suporta vídeos (MP4, MOV, WebM, etc. até 150MB), fotos, áudios e documentos
+                      Suporta vídeos (MP4, MOV, WebM, etc. até 250MB) ou cole com Ctrl+V
                     </span>
                     <input
                       type="file"
@@ -1105,6 +1234,50 @@ export default function WhatsAppMessages() {
                     />
                   </label>
                 </div>
+
+                {/* External Cloud Link Option */}
+                <div className="flex items-center justify-end mt-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setShowLinkInput(!showLinkInput)}
+                    className="text-[11px] font-bold text-emerald-700 hover:text-emerald-800 hover:underline flex items-center gap-1 cursor-pointer"
+                  >
+                    <LinkIcon size={12} />
+                    <span>{showLinkInput ? 'Ocultar Link Nuvem' : '+ Adicionar Link de Vídeo (Drive / Nuvem)'}</span>
+                  </button>
+                </div>
+
+                {showLinkInput && (
+                  <div className="mt-2 p-3 bg-emerald-50/70 border border-emerald-200 rounded-xl space-y-2 animate-in fade-in">
+                    <div className="text-[11px] font-bold text-emerald-950 flex items-center gap-1.5">
+                      <Video size={13} className="text-emerald-600" />
+                      <span>Anexar Link de Vídeo em Nuvem (Google Drive, WeTransfer, YouTube, OneDrive):</span>
+                    </div>
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <input
+                        type="text"
+                        placeholder="Nome do vídeo (ex: Câmera de Segurança)"
+                        value={customUrlName}
+                        onChange={e => setCustomUrlName(e.target.value)}
+                        className="sm:w-1/3 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 outline-none focus:ring-1 focus:ring-emerald-500"
+                      />
+                      <input
+                        type="url"
+                        placeholder="Link do vídeo (https://...)"
+                        value={customUrl}
+                        onChange={e => setCustomUrl(e.target.value)}
+                        className="flex-1 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 outline-none focus:ring-1 focus:ring-emerald-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleAddExternalLink(false)}
+                        className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-lg text-xs font-bold cursor-pointer shrink-0 transition-all"
+                      >
+                        Anexar Link
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Actions */}
@@ -1252,17 +1425,39 @@ export default function WhatsAppMessages() {
               </div>
 
               {/* Attachments Section */}
-              <div>
+              <div onPaste={(e) => handlePasteFiles(e, true)}>
                 <div className="flex items-center justify-between mb-1.5">
                   <label className="text-[10px] font-black text-slate-600 uppercase tracking-wider">
                     Anexos e Mídias ({editAttachments.length})
                   </label>
                   {isEditUploading && (
                     <span className="text-[10px] font-bold text-amber-700 animate-pulse flex items-center gap-1">
-                      <RefreshCw size={11} className="animate-spin" /> Processando upload...
+                      <RefreshCw size={11} className="animate-spin text-amber-600" />
+                      Enviando vídeo/arquivo...
                     </span>
                   )}
                 </div>
+
+                {/* Edit upload progress bar */}
+                {editUploadProgress && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 mb-2.5 animate-in fade-in">
+                    <div className="flex items-center justify-between text-xs font-bold text-amber-900 mb-1.5">
+                      <span className="flex items-center gap-1.5 truncate">
+                        <Video size={14} className="text-amber-600 animate-bounce shrink-0" />
+                        <span className="truncate">Subindo vídeo: <strong>{editUploadProgress.fileName}</strong></span>
+                      </span>
+                      <span className="tabular-nums font-mono text-[11px] bg-amber-200/80 px-2 py-0.5 rounded text-amber-800 shrink-0">
+                        {editUploadProgress.pct}%
+                      </span>
+                    </div>
+                    <div className="w-full bg-amber-200/60 rounded-full h-2 overflow-hidden">
+                      <div 
+                        className="bg-amber-600 h-2 rounded-full transition-all duration-200 ease-out"
+                        style={{ width: `${editUploadProgress.pct}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
 
                 <div
                   onDragOver={(e) => {
@@ -1312,10 +1507,12 @@ export default function WhatsAppMessages() {
                               <p className="font-bold text-slate-800 text-[11px] truncate leading-tight">
                                 {att.name}
                               </p>
-                              {att.size && (
+                              {att.size ? (
                                 <span className="text-[10px] text-slate-400">
                                   {(att.size / 1024 / 1024).toFixed(2)} MB
                                 </span>
+                              ) : (
+                                <span className="text-[10px] text-purple-600 font-medium">Link Nuvem</span>
                               )}
                             </div>
                           </div>
@@ -1338,23 +1535,62 @@ export default function WhatsAppMessages() {
                       <span>Arraste ou clique para adicionar mais vídeos ou arquivos</span>
                     </div>
                     <span className="text-[10px] text-slate-400 mt-0.5">
-                      Vídeos (MP4, MOV, WebM até 150MB), fotos, áudios e documentos
+                      Vídeos (MP4, MOV, WebM até 250MB) ou cole com Ctrl+V
                     </span>
                     <input
                       type="file"
                       multiple
                       accept="image/*,video/*,audio/*,.mp4,.mov,.m4v,.webm,.avi,.mkv,.3gp,.wmv,.flv,.pdf,.doc,.docx,.xls,.xlsx,.txt"
-                      onChange={async (e) => {
-                        if (e.target.files) {
-                          await processEditFiles(e.target.files);
-                          e.target.value = '';
-                        }
-                      }}
+                      onChange={handleEditFileUpload}
                       className="hidden"
                       disabled={isEditUploading}
                     />
                   </label>
                 </div>
+
+                {/* External Cloud Link Option in Edit */}
+                <div className="flex items-center justify-end mt-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setShowEditLinkInput(!showEditLinkInput)}
+                    className="text-[11px] font-bold text-amber-700 hover:text-amber-800 hover:underline flex items-center gap-1 cursor-pointer"
+                  >
+                    <LinkIcon size={12} />
+                    <span>{showEditLinkInput ? 'Ocultar Link Nuvem' : '+ Adicionar Link de Vídeo (Drive / Nuvem)'}</span>
+                  </button>
+                </div>
+
+                {showEditLinkInput && (
+                  <div className="mt-2 p-3 bg-amber-50/70 border border-amber-200 rounded-xl space-y-2 animate-in fade-in">
+                    <div className="text-[11px] font-bold text-amber-950 flex items-center gap-1.5">
+                      <Video size={13} className="text-amber-600" />
+                      <span>Anexar Link de Vídeo em Nuvem:</span>
+                    </div>
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <input
+                        type="text"
+                        placeholder="Nome do vídeo (ex: Câmera)"
+                        value={customEditUrlName}
+                        onChange={e => setCustomEditUrlName(e.target.value)}
+                        className="sm:w-1/3 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 outline-none focus:ring-1 focus:ring-amber-500"
+                      />
+                      <input
+                        type="url"
+                        placeholder="Link do vídeo (https://...)"
+                        value={customEditUrl}
+                        onChange={e => setCustomEditUrl(e.target.value)}
+                        className="flex-1 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 outline-none focus:ring-1 focus:ring-amber-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleAddExternalLink(true)}
+                        className="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 active:scale-95 text-white rounded-lg text-xs font-bold cursor-pointer shrink-0 transition-all"
+                      >
+                        Anexar Link
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Actions */}
@@ -1716,15 +1952,36 @@ export default function WhatsAppMessages() {
                           )}
 
                           {isVideo && att.url && (
-                            <div className="mt-1 rounded-xl overflow-hidden border border-slate-300 bg-black shadow-xs">
-                              <video
-                                src={att.url}
-                                controls
-                                playsInline
-                                preload="metadata"
-                                className="max-h-60 w-full rounded-xl bg-black"
-                              />
-                            </div>
+                            /drive\.google\.com|youtube\.com|youtu\.be|wetransfer\.com|dropbox\.com/i.test(att.url) ? (
+                              <div className="mt-1 p-3 bg-purple-50 border border-purple-200 rounded-xl flex items-center justify-between">
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <Video size={18} className="text-purple-600 shrink-0" />
+                                  <div className="min-w-0">
+                                    <span className="block font-bold text-xs text-purple-950">Vídeo em Nuvem Externa</span>
+                                    <span className="text-[10px] text-purple-700 truncate max-w-xs block">{att.url}</span>
+                                  </div>
+                                </div>
+                                <a
+                                  href={att.url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-xs font-bold flex items-center gap-1 shadow-xs shrink-0"
+                                >
+                                  <span>Abrir Link</span>
+                                  <ExternalLink size={12} />
+                                </a>
+                              </div>
+                            ) : (
+                              <div className="mt-1 rounded-xl overflow-hidden border border-slate-300 bg-black shadow-xs">
+                                <video
+                                  src={att.url}
+                                  controls
+                                  playsInline
+                                  preload="metadata"
+                                  className="max-h-60 w-full rounded-xl bg-black"
+                                />
+                              </div>
+                            )
                           )}
 
                           {isAudio && previewUrl && (
