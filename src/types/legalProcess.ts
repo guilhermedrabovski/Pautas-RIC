@@ -2,59 +2,38 @@ export type CourtSystem =
   | 'TJPR Projudi'
   | 'TJPR Eproc'
   | 'TRF4'
-  | 'STJ'
-  | 'STF'
-  | 'Inquérito Policial (PCPR)'
-  | 'Boletim de Ocorrência (SESP)'
-  | 'Vara de Execuções (SEEU)'
-  | 'Outro';
-
-export type ProcessStage = 
-  | 'Inquérito Policial'
-  | 'Denúncia Oferecida'
-  | 'Audiência de Custódia'
-  | 'Instrução e Julgamento'
-  | 'Pronúncia (Júri Marcado)'
-  | 'Sentença / Condenação'
-  | 'Recurso em Andamento'
-  | 'Execução da Pena'
-  | 'Arquivado / Extinto';
-
-export type DefendantStatus = 
-  | 'Preso Preventivo'
-  | 'Prisão Temporária'
-  | 'Prisão Domiciliar'
-  | 'Tornozeleira Eletrônica'
-  | 'Foragido'
-  | 'Em Liberdade'
-  | 'Condenado Cumprindo'
-  | 'N/A';
+  | 'PCPR (Inquérito)'
+  | 'Justiça Federal'
+  | 'Outro'
+  | string;
 
 export interface LegalProcess {
   id: string;
-  storyId?: string;
+  caseName?: string; // Nome do caso na TV (ex: Caso Daniel, Morte no Uberaba)
+  storyId?: string; // Vínculo opcional com História
   storyTitle?: string;
-  processNumber: string;
-  court: CourtSystem;
+  processNumber: string; // Número CNJ ou do Inquérito
+  court?: CourtSystem; // TJPR Projudi, TJPR Eproc, PCPR, etc.
+  defendants?: string; // Réu(s) / Investigado(s)
+  defendantStatus?: string; // Status simples: Preso, Em Liberdade, Foragido, etc.
+  notes?: string; // Anotações da TV / Situação rápida
   comarca?: string;
   vara?: string;
-  defendants: string;
-  defendantStatus?: DefendantStatus;
+  createdAt: number;
+  updatedAt?: number;
+  createdBy?: string;
+  createdByName?: string;
+  // Campos legados para compatibilidade com registros existentes no Firestore:
+  stage?: string;
   victims?: string;
   defenseLawyer?: string;
   defenseLawyerPhone?: string;
   prosecutor?: string;
   judge?: string;
-  stage: ProcessStage;
-  isSecret: boolean;
+  isSecret?: boolean;
   nextHearingDate?: string;
   nextHearingTime?: string;
   nextHearingNotes?: string;
   summary?: string;
   documentLink?: string;
-  notes?: string;
-  createdBy: string;
-  createdByName: string;
-  createdAt: number;
-  updatedAt: number;
 }

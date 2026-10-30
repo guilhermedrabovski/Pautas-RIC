@@ -3,12 +3,11 @@ import { collection, query, orderBy, onSnapshot, addDoc, updateDoc, doc, getDocs
 import { db } from '../lib/firebase';
 import { useAuth, UserData } from '../contexts/AuthContext';
 import { confirmAction } from '../lib/confirmHelper';
-import { BookOpen, Plus, FileText, Phone, Link as LinkIcon, History, Edit, Trash2, Save, X, AlertCircle, Scale, Copy, ExternalLink, Lock, Calendar } from 'lucide-react';
+import { BookOpen, Plus, FileText, Phone, Link as LinkIcon, History, Edit, Trash2, Save, X, AlertCircle, Scale, Copy, ExternalLink, Lock } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { getDisplayNames } from '../lib/userUtils';
 import { LegalProcess } from '../types/legalProcess';
-import { format, parseISO } from 'date-fns';
 
 interface Pendency {
   id: string;
@@ -643,20 +642,20 @@ function StoryCard({
                         {proc.comarca && <span className="text-gray-400"> · {proc.comarca}</span>}
                       </div>
 
-                      {proc.nextHearingDate && (
-                        <div className="mt-2 text-[10px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-1 rounded flex items-center gap-1">
-                          <Calendar size={11} /> Audiência: {format(parseISO(proc.nextHearingDate), 'dd/MM/yyyy')} {proc.nextHearingTime && `às ${proc.nextHearingTime}`}
+                      {proc.notes && (
+                        <div className="mt-1.5 text-[11px] text-amber-900 bg-amber-50 p-1.5 rounded border border-amber-100">
+                          {proc.notes}
                         </div>
                       )}
                     </div>
 
                     <div className="mt-2 pt-2 border-t border-gray-200/80 flex items-center justify-between text-[10px]">
-                      <span className="text-gray-500 font-medium">{proc.stage}</span>
+                      <span className="text-gray-500 font-medium">{proc.defendantStatus || 'Caso TV'}</span>
                       <Link
                         to="/processos"
                         className="text-amber-700 hover:underline font-bold"
                       >
-                        Abrir ficha completa →
+                        Consultar processos →
                       </Link>
                     </div>
                   </div>

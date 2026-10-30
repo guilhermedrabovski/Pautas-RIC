@@ -253,8 +253,8 @@ export default function Dashboard() {
             <Scale size={20} />
           </div>
           <div>
-            <span className="block font-bold text-xs text-ric-text group-hover:text-amber-700">Processos</span>
-            <span className="text-[11px] text-ric-muted">CNJ, varas & réus</span>
+            <span className="block font-bold text-xs text-ric-text group-hover:text-amber-700">Processos dos Casos</span>
+            <span className="text-[11px] text-ric-muted">Consultar CNJ & réus da TV</span>
           </div>
         </Link>
 

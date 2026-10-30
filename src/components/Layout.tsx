@@ -76,7 +76,7 @@ export default function Layout() {
         { name: 'Meu Painel', icon: ClipboardList, path: '/my-dashboard', hide: !isReporter },
         { name: 'Lembretes', icon: Bell, path: '/reminders', badge: unreadRemindersCount },
         { name: 'Histórias (Repercussão)', icon: BookOpen, path: '/stories' },
-        { name: 'Processos Judiciais', icon: Scale, path: '/processos' },
+        { name: 'Processos dos Casos', icon: Scale, path: '/processos' },
         { name: 'Checklist', icon: CheckSquare, path: '/checklist' },
         { name: 'Configurações', icon: SettingsIcon, path: '/settings' }
       ].filter(item => !item.hide);
