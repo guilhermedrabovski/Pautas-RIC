@@ -249,19 +249,20 @@ export default function WhatsAppMessages() {
 
               for (let attempt = 1; attempt <= 3; attempt++) {
                 try {
+                  const chunkForm = new FormData();
+                  chunkForm.append('chunk', chunkBlob, 'chunk.bin');
+                  chunkForm.append('uploadId', uploadId);
+                  chunkForm.append('chunkIndex', String(i));
+                  chunkForm.append('totalChunks', String(totalChunks));
+                  chunkForm.append('fileName', file.name);
+                  chunkForm.append('fileType', file.type || (isVideoFile ? 'video/mp4' : 'application/octet-stream'));
+
                   const chunkUrl = `/api/upload-chunk?uploadId=${encodeURIComponent(uploadId)}&chunkIndex=${i}&totalChunks=${totalChunks}&fileName=${encodeURIComponent(file.name)}&fileType=${encodeURIComponent(file.type || (isVideoFile ? 'video/mp4' : 'application/octet-stream'))}`;
                   
                   const chunkRes = await fetch(chunkUrl, {
                     method: 'POST',
-                    headers: {
-                      'Content-Type': 'application/octet-stream',
-                      'X-Upload-Id': uploadId,
-                      'X-Chunk-Index': String(i),
-                      'X-Total-Chunks': String(totalChunks),
-                      'X-File-Name': encodeURIComponent(file.name),
-                      'X-File-Type': encodeURIComponent(file.type || (isVideoFile ? 'video/mp4' : 'application/octet-stream')),
-                    },
-                    body: chunkBlob,
+                    credentials: 'include',
+                    body: chunkForm,
                   });
 
                   if (!chunkRes.ok) {
@@ -311,6 +312,7 @@ export default function WhatsAppMessages() {
 
             const res = await fetch('/api/upload-file', {
               method: 'POST',
+              credentials: 'include',
               body: formData,
             });
 
@@ -334,6 +336,7 @@ export default function WhatsAppMessages() {
             const base64Data = await readFileAsBase64(file);
             const res = await fetch('/api/upload', {
               method: 'POST',
+              credentials: 'include',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 name: file.name,

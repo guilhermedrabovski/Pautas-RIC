@@ -83,10 +83,16 @@ async function startServer() {
 
   // Universal CORS & Preflight Middleware (Crucial for iFrames and cloud proxies)
   app.use((req, res, next) => {
-    res.header("Access-Control-Allow-Origin", "*");
+    const origin = req.headers.origin;
+    if (origin) {
+      res.header("Access-Control-Allow-Origin", origin);
+    } else {
+      res.header("Access-Control-Allow-Origin", "*");
+    }
+    res.header("Access-Control-Allow-Credentials", "true");
     res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, HEAD, PATCH");
-    res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization, Range, X-Upload-Id, X-Chunk-Index, X-Total-Chunks");
-    res.header("Access-Control-Expose-Headers", "Content-Range, Accept-Ranges, Content-Length, Content-Disposition");
+    res.header("Access-Control-Allow-Headers", "*");
+    res.header("Access-Control-Expose-Headers", "*");
     if (req.method === "OPTIONS") {
       return res.status(200).end();
     }
@@ -230,29 +236,29 @@ async function startServer() {
         const finalFilename = `${Date.now()}_${Math.random().toString(36).substring(2, 8)}_${baseRaw}${ext}`;
         const finalFilePath = path.join(uploadsDir, finalFilename);
 
-        const writeStream = fs.createWriteStream(finalFilePath);
+        // Remove any previous file at this path
+        if (fs.existsSync(finalFilePath)) {
+          try {
+            fs.unlinkSync(finalFilePath);
+          } catch {
+            // ignore
+          }
+        }
 
+        // Synchronously append each chunk part
         for (let i = 0; i < totalChunks; i++) {
           const partPath = path.join(chunksDir, `${uploadId}_chunk_${i}`);
           if (!fs.existsSync(partPath)) {
-            writeStream.close();
             return res.status(400).json({ error: `Pedaço ${i} de ${totalChunks} não encontrado no servidor. Tente reenviar.` });
           }
           const partData = fs.readFileSync(partPath);
-          writeStream.write(partData);
+          fs.appendFileSync(finalFilePath, partData);
           try {
             fs.unlinkSync(partPath);
           } catch {
             // ignore
           }
         }
-
-        writeStream.end();
-
-        await new Promise<void>((resolve, reject) => {
-          writeStream.on('finish', () => resolve());
-          writeStream.on('error', (err) => reject(err));
-        });
 
         const stats = fs.statSync(finalFilePath);
         console.log(`[Upload Chunked] Vídeo montado com sucesso: ${finalFilename} (${stats.size} bytes)`);
