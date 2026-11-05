@@ -228,12 +228,14 @@ export default function WhatsAppMessages() {
         let fileUrl = '';
         let uploadSucceeded = false;
 
+        let lastUploadError = '';
+
         // 1. CHUNKED UPLOAD: Slices large files (especially videos) into 4MB pieces
         // This avoids proxy 32MB payload limits, connection timeouts and drops
         const CHUNK_SIZE = 4 * 1024 * 1024; // 4MB chunks
         if (file.size > CHUNK_SIZE || isVideoFile) {
           try {
-            const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+            const totalChunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE));
             const uploadId = `up_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
 
             for (let i = 0; i < totalChunks; i++) {
@@ -241,37 +243,63 @@ export default function WhatsAppMessages() {
               const end = Math.min(start + CHUNK_SIZE, file.size);
               const chunkBlob = file.slice(start, end);
 
-              const chunkForm = new FormData();
-              chunkForm.append('uploadId', uploadId);
-              chunkForm.append('chunkIndex', String(i));
-              chunkForm.append('totalChunks', String(totalChunks));
-              chunkForm.append('fileName', file.name);
-              chunkForm.append('fileType', file.type || (isVideoFile ? 'video/mp4' : 'application/octet-stream'));
-              chunkForm.append('chunk', chunkBlob, 'chunk.bin');
+              // Retry logic: up to 3 attempts per chunk
+              let chunkUploaded = false;
+              let chunkError = '';
 
-              const chunkRes = await fetch('/api/upload-chunk', {
-                method: 'POST',
-                body: chunkForm,
-              });
+              for (let attempt = 1; attempt <= 3; attempt++) {
+                try {
+                  const chunkUrl = `/api/upload-chunk?uploadId=${encodeURIComponent(uploadId)}&chunkIndex=${i}&totalChunks=${totalChunks}&fileName=${encodeURIComponent(file.name)}&fileType=${encodeURIComponent(file.type || (isVideoFile ? 'video/mp4' : 'application/octet-stream'))}`;
+                  
+                  const chunkRes = await fetch(chunkUrl, {
+                    method: 'POST',
+                    headers: {
+                      'Content-Type': 'application/octet-stream',
+                      'X-Upload-Id': uploadId,
+                      'X-Chunk-Index': String(i),
+                      'X-Total-Chunks': String(totalChunks),
+                      'X-File-Name': encodeURIComponent(file.name),
+                      'X-File-Type': encodeURIComponent(file.type || (isVideoFile ? 'video/mp4' : 'application/octet-stream')),
+                    },
+                    body: chunkBlob,
+                  });
 
-              if (!chunkRes.ok) {
-                const errJson = await chunkRes.json().catch(() => ({}));
-                throw new Error(errJson.error || `Erro no pedaço ${i + 1}/${totalChunks}`);
+                  if (!chunkRes.ok) {
+                    const errJson = await chunkRes.json().catch(() => ({}));
+                    throw new Error(errJson.error || `Erro HTTP ${chunkRes.status} no pedaço ${i + 1}/${totalChunks}`);
+                  }
+
+                  const chunkData = await chunkRes.json();
+                  chunkUploaded = true;
+
+                  const pct = Math.min(99, Math.round(((i + 1) / totalChunks) * 100));
+                  if (setProgressState) setProgressState({ fileName: file.name, pct });
+                  toast.loading(`Subindo "${file.name}" (${pct}%)...`, { id: uploadToastId });
+
+                  if (chunkData.completed && chunkData.url) {
+                    fileUrl = chunkData.url;
+                    uploadSucceeded = true;
+                  }
+                  break; // Successful attempt, proceed to next chunk
+                } catch (retryErr: any) {
+                  chunkError = retryErr.message || String(retryErr);
+                  if (attempt < 3) {
+                    await new Promise(r => setTimeout(r, 600));
+                  }
+                }
               }
 
-              const chunkData = await chunkRes.json();
-              const pct = Math.min(99, Math.round(((i + 1) / totalChunks) * 100));
-              if (setProgressState) setProgressState({ fileName: file.name, pct });
-              toast.loading(`Subindo "${file.name}" (${pct}%)...`, { id: uploadToastId });
+              if (!chunkUploaded) {
+                throw new Error(chunkError || `Pedaço ${i + 1}/${totalChunks} falhou após 3 tentativas`);
+              }
 
-              if (chunkData.completed && chunkData.url) {
-                fileUrl = chunkData.url;
-                uploadSucceeded = true;
+              if (uploadSucceeded) {
                 break;
               }
             }
           } catch (chunkErr: any) {
-            console.warn('Chunked upload falhou, tentando fallback multipart:', chunkErr);
+            lastUploadError = chunkErr.message || 'Erro no envio em partes';
+            console.warn('Chunked upload falhou, tentando fallback:', chunkErr);
           }
         }
 
@@ -295,6 +323,7 @@ export default function WhatsAppMessages() {
             fileUrl = data.url;
             uploadSucceeded = true;
           } catch (multiErr: any) {
+            lastUploadError = multiErr.message || lastUploadError;
             console.warn('Fallback multipart falhou, testando base64:', multiErr);
           }
         }
@@ -317,8 +346,12 @@ export default function WhatsAppMessages() {
               const data = await res.json();
               fileUrl = data.url;
               uploadSucceeded = true;
+            } else {
+              const errData = await res.json().catch(() => ({}));
+              lastUploadError = errData.error || lastUploadError;
             }
-          } catch (b64Err) {
+          } catch (b64Err: any) {
+            lastUploadError = b64Err.message || lastUploadError;
             console.warn('Fallback base64 falhou:', b64Err);
           }
         }
@@ -347,7 +380,11 @@ export default function WhatsAppMessages() {
           setTargetAttachments(prev => [...prev, newItem]);
           toast.success(`"${file.name}" anexado com sucesso!`);
         } else {
-          toast.error(`Falha ao subir "${file.name}". Verifique o formato ou tente novamente.`);
+          toast.error(
+            lastUploadError 
+              ? `Falha ao subir "${file.name}": ${lastUploadError}`
+              : `Falha ao subir "${file.name}". Verifique o formato ou tente novamente.`
+          );
         }
       }
     } finally {

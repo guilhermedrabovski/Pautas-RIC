@@ -120,8 +120,20 @@ async function startServer() {
       cb(null, chunksDir);
     },
     filename: (req, _file, cb) => {
-      const uploadId = (req.body.uploadId || 'temp').replace(/[^a-zA-Z0-9_-]/g, '');
-      const chunkIndex = parseInt(req.body.chunkIndex || '0', 10);
+      const uploadId = (
+        (req.query?.uploadId as string) || 
+        (req.headers['x-upload-id'] as string) || 
+        (req.body?.uploadId as string) || 
+        'temp'
+      ).replace(/[^a-zA-Z0-9_-]/g, '');
+
+      const chunkIndex = parseInt(
+        (req.query?.chunkIndex as string) || 
+        (req.headers['x-chunk-index'] as string) || 
+        (req.body?.chunkIndex as string) || 
+        '0', 
+        10
+      );
       cb(null, `${uploadId}_chunk_${chunkIndex}`);
     }
   });
@@ -151,78 +163,134 @@ async function startServer() {
 
   // 1. Chunked Upload Route (BEST FOR LARGE WHATSAPP VIDEOS: avoids proxy timeouts & 32MB payload limits)
   app.post("/api/upload-chunk", (req, res) => {
-    uploadChunk.single('chunk')(req, res, async (err) => {
-      if (err) {
-        console.error("[Upload Chunk Multer Error]:", err);
-        return res.status(400).json({ error: err.message || "Erro no upload do pedaço do vídeo." });
-      }
+    // Extract metadata from query parameters or headers (100% immune to multipart field ordering bugs)
+    const uploadId = (
+      (req.query.uploadId as string) || 
+      (req.headers['x-upload-id'] as string) || 
+      (req.body?.uploadId as string) || 
+      ''
+    ).replace(/[^a-zA-Z0-9_-]/g, '');
 
+    const chunkIndex = parseInt(
+      (req.query.chunkIndex as string) || 
+      (req.headers['x-chunk-index'] as string) || 
+      (req.body?.chunkIndex as string) || 
+      '-1', 
+      10
+    );
+
+    const totalChunks = parseInt(
+      (req.query.totalChunks as string) || 
+      (req.headers['x-total-chunks'] as string) || 
+      (req.body?.totalChunks as string) || 
+      '0', 
+      10
+    );
+
+    const rawFileName = (
+      (req.query.fileName as string) || 
+      (req.headers['x-file-name'] as string) || 
+      (req.body?.fileName as string) || 
+      'video.mp4'
+    );
+    let originalName = 'video.mp4';
+    try {
+      originalName = decodeURIComponent(rawFileName);
+    } catch {
+      originalName = rawFileName;
+    }
+
+    const fileType = (
+      (req.query.fileType as string) || 
+      (req.headers['x-file-type'] as string) || 
+      'video/mp4'
+    );
+
+    if (!uploadId || chunkIndex < 0 || totalChunks <= 0) {
+      return res.status(400).json({ error: "Parâmetros de chunk inválidos (uploadId, chunkIndex ou totalChunks ausentes)." });
+    }
+
+    const chunkPath = path.join(chunksDir, `${uploadId}_chunk_${chunkIndex}`);
+
+    const onChunkSaved = async () => {
       try {
-        const uploadId = (req.body.uploadId || '').replace(/[^a-zA-Z0-9_-]/g, '');
-        const chunkIndex = parseInt(req.body.chunkIndex, 10);
-        const totalChunks = parseInt(req.body.totalChunks, 10);
-        const originalName = req.body.fileName || 'video.mp4';
-        const fileType = req.body.fileType || 'video/mp4';
-
-        if (!uploadId || isNaN(chunkIndex) || isNaN(totalChunks)) {
-          return res.status(400).json({ error: "Parâmetros de chunk inválidos (uploadId, chunkIndex ou totalChunks ausentes)." });
-        }
-
-        // If this is the last chunk, assemble the file
-        if (chunkIndex === totalChunks - 1) {
-          const ext = path.extname(originalName) || '.mp4';
-          const baseRaw = path.basename(originalName, ext).replace(/[^a-zA-Z0-9_-]/g, '_').substring(0, 40) || 'video';
-          const finalFilename = `${Date.now()}_${Math.random().toString(36).substring(2, 8)}_${baseRaw}${ext}`;
-          const finalFilePath = path.join(uploadsDir, finalFilename);
-
-          const writeStream = fs.createWriteStream(finalFilePath);
-
-          for (let i = 0; i < totalChunks; i++) {
-            const chunkPath = path.join(chunksDir, `${uploadId}_chunk_${i}`);
-            if (!fs.existsSync(chunkPath)) {
-              writeStream.close();
-              return res.status(400).json({ error: `Pedaço ${i} não encontrado no servidor. Tente reenviar.` });
-            }
-            const chunkData = fs.readFileSync(chunkPath);
-            writeStream.write(chunkData);
-            try {
-              fs.unlinkSync(chunkPath);
-            } catch {
-              // ignore
-            }
-          }
-
-          writeStream.end();
-
-          await new Promise<void>((resolve, reject) => {
-            writeStream.on('finish', () => resolve());
-            writeStream.on('error', (err) => reject(err));
-          });
-
-          const stats = fs.statSync(finalFilePath);
-          console.log(`[Upload Chunked] Vídeo montado com sucesso: ${finalFilename} (${stats.size} bytes)`);
-
+        // If not the final chunk, acknowledge chunk received
+        if (chunkIndex < totalChunks - 1) {
           return res.json({
             success: true,
-            completed: true,
-            url: `/uploads/${finalFilename}`,
-            name: originalName,
-            type: fileType,
-            size: stats.size
+            completed: false,
+            chunkIndex,
+            totalChunks
           });
         }
 
-        // Chunk saved successfully, awaiting next chunks
+        // Final chunk received: assemble all chunks into the final destination file
+        const ext = path.extname(originalName) || '.mp4';
+        const baseRaw = path.basename(originalName, ext).replace(/[^a-zA-Z0-9_-]/g, '_').substring(0, 40) || 'video';
+        const finalFilename = `${Date.now()}_${Math.random().toString(36).substring(2, 8)}_${baseRaw}${ext}`;
+        const finalFilePath = path.join(uploadsDir, finalFilename);
+
+        const writeStream = fs.createWriteStream(finalFilePath);
+
+        for (let i = 0; i < totalChunks; i++) {
+          const partPath = path.join(chunksDir, `${uploadId}_chunk_${i}`);
+          if (!fs.existsSync(partPath)) {
+            writeStream.close();
+            return res.status(400).json({ error: `Pedaço ${i} de ${totalChunks} não encontrado no servidor. Tente reenviar.` });
+          }
+          const partData = fs.readFileSync(partPath);
+          writeStream.write(partData);
+          try {
+            fs.unlinkSync(partPath);
+          } catch {
+            // ignore
+          }
+        }
+
+        writeStream.end();
+
+        await new Promise<void>((resolve, reject) => {
+          writeStream.on('finish', () => resolve());
+          writeStream.on('error', (err) => reject(err));
+        });
+
+        const stats = fs.statSync(finalFilePath);
+        console.log(`[Upload Chunked] Vídeo montado com sucesso: ${finalFilename} (${stats.size} bytes)`);
+
         return res.json({
           success: true,
-          completed: false,
-          chunkIndex,
-          totalChunks
+          completed: true,
+          url: `/uploads/${finalFilename}`,
+          name: originalName,
+          type: fileType,
+          size: stats.size
         });
       } catch (assembleErr: any) {
         console.error("Erro ao montar chunks do vídeo:", assembleErr);
         return res.status(500).json({ error: "Falha ao finalizar montagem do arquivo: " + assembleErr.message });
       }
+    };
+
+    // Check if client is streaming raw binary (RECOMMENDED: direct octet-stream pipe)
+    const isMultipart = (req.headers['content-type'] || '').includes('multipart/form-data');
+    if (!isMultipart) {
+      const writeStream = fs.createWriteStream(chunkPath);
+      req.pipe(writeStream);
+      writeStream.on('error', (err) => {
+        console.error(`[Upload Chunk Stream Error] id=${uploadId} chunk=${chunkIndex}:`, err);
+        return res.status(500).json({ error: "Erro ao gravar pedaço: " + err.message });
+      });
+      writeStream.on('finish', onChunkSaved);
+      return;
+    }
+
+    // Fallback: If client sent multipart
+    uploadChunk.single('chunk')(req, res, async (err) => {
+      if (err) {
+        console.error("[Upload Chunk Multer Error]:", err);
+        return res.status(400).json({ error: err.message || "Erro no upload do pedaço do vídeo." });
+      }
+      await onChunkSaved();
     });
   });
 
